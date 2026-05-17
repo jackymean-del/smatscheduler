@@ -1,22 +1,32 @@
 import { Component, type ReactNode } from "react"
 import { useTimetableStore } from "@/store/timetableStore"
 import { useAuthStore } from "@/store/authStore"
-import { Step1Org }                from "@/routes/wizard/step1-org"
-import { StepBell }                from "@/routes/wizard/step-bell"
+import { StepStructure }           from "@/routes/wizard/step-structure"
 import { StepResources }           from "@/routes/wizard/step-resources"
 import { StepSectionStrengths }    from "@/routes/wizard/step-section-strengths"
+import { StepConstraints }         from "@/routes/wizard/step-constraints"
 import { Step6Generate }           from "@/routes/wizard/step6-generate"
 import { CheckCircle2 } from "lucide-react"
 
-// ── 5-step wizard — schedU MVP (simplified, AI-driven) ──────
-const STEPS = [Step1Org, StepBell, StepResources, StepSectionStrengths, Step6Generate]
+// ── 5-step user-facing wizard ──
+// Structure (School+Bell merged) → Resources → Allocations → Constraints → Generate
+const STEPS = [StepStructure, StepResources, StepSectionStrengths, StepConstraints, Step6Generate]
 
+// User-facing 5-step model. Internal step implementations unchanged —
+// we just relabel + reorder presentation while the engine consumes the
+// original data flow described in the schedU implementation doc.
+//
+//   Structure   = School/board/grades  (Step1Org)
+//   Resources   = Days/periods + Teachers/Subjects/Rooms (StepBell, StepResources)
+//   Allocations = Section-Subject strength matrix (StepSectionStrengths)
+//   Constraints = Scope rules per entity (review existing scope from Resources)
+//   Generate    = AI builds the timetable (Step6Generate)
 const STEP_META = [
-  { label:"School",      sub:"Board, grades & scale",          icon:"🏫", color:"#7C6FE0" },
-  { label:"Schedule",    sub:"Days, periods & breaks",         icon:"🔔", color:"#9B8EF5" },
-  { label:"Resources",   sub:"Classes, teachers & subjects",   icon:"📋", color:"#7C6FE0" },
-  { label:"Strengths",   sub:"Students per subject (Excel-feel)", icon:"📊", color:"#9B8EF5" },
-  { label:"Generate",    sub:"AI builds your timetable",       icon:"✨", color:"#D4920E" },
+  { label:"Structure",   sub:"School, board, grades & scale",   icon:"🏫", color:"#7C6FE0" },
+  { label:"Resources",   sub:"Days, periods, teachers, rooms",  icon:"📋", color:"#9B8EF5" },
+  { label:"Allocations", sub:"Students per subject (Excel-feel)", icon:"📊", color:"#7C6FE0" },
+  { label:"Constraints", sub:"Scope rules & availability",      icon:"🔒", color:"#9B8EF5" },
+  { label:"Generate",    sub:"AI builds your timetable",        icon:"✨", color:"#D4920E" },
 ]
 
 // ── Error boundary ────────────────────────────────────────────
@@ -63,7 +73,7 @@ const SB_ACCENT = '#7C6FE0'   // Lavender
 export function WizardPage() {
   const { step, setStep } = useTimetableStore()
   const { isAuthenticated, user } = useAuthStore()
-  const CurrentStep = STEPS[step - 1] ?? Step1Org
+  const CurrentStep = STEPS[step - 1] ?? StepStructure
   const total = STEPS.length
   const pct   = Math.round(((step - 1) / (total - 1)) * 100)
 
