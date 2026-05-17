@@ -16,12 +16,13 @@
  * logic as the engine to distribute teachers across sections fairly.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import type { Staff, Subject, Section } from '@/types'
 import { DataGrid, DataGridColumn } from '@/components/DataGrid/DataGrid'
 import { parseAllocation } from '@/lib/allocationSyntax'
-import { Users, Sparkles, Layers } from 'lucide-react'
+import { Users, Sparkles, Layers, Pencil } from 'lucide-react'
+import { TeacherAllocationModal } from './TeacherAllocationModal'
 
 interface Row {
   teacherName: string
@@ -34,6 +35,7 @@ export function TeacherAllocationGrid() {
     staff, subjects, sections,
     subjectAllocations, teacherAllocations,
   } = store
+  const [editTarget, setEditTarget] = useState<{ teacher: string; subject: string } | null>(null)
 
   // Per-teacher subject totals + class counts
   const subjectsForTeacher = (teacherName: string, subjectName: string) => {
@@ -105,15 +107,37 @@ export function TeacherAllocationGrid() {
         },
         render: (_, r) => {
           const { total, classCount } = subjectsForTeacher(r.teacherName, sub.name)
-          if (total === 0) return <div style={{ padding: '10px 12px', color: '#D8D2FF', textAlign: 'right' as const }}>—</div>
+          const isEmpty = total === 0
           return (
-            <div style={{ padding: '8px 12px', textAlign: 'right' as const }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#13111E', fontFamily: "'DM Mono', monospace" }}>
-                {total}
-              </div>
-              <div style={{ fontSize: 9, color: '#8B87AD', fontWeight: 600, marginTop: 1 }}>
-                {classCount} {classCount === 1 ? 'class' : 'classes'}
-              </div>
+            <div
+              onClick={() => setEditTarget({ teacher: r.teacherName, subject: sub.name })}
+              style={{
+                padding: '8px 12px',
+                textAlign: 'right' as const,
+                cursor: 'pointer',
+                transition: 'background 0.12s',
+                position: 'relative' as const,
+                minHeight: 38,
+              }}
+              onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = '#F5F2FF'}
+              onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
+              title="Click to edit per-section split"
+            >
+              {isEmpty ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, color: '#B8B4D4' }}>
+                  <Pencil size={10} />
+                  <span>—</span>
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#13111E', fontFamily: "'DM Mono', monospace" }}>
+                    {total}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#8B87AD', fontWeight: 600, marginTop: 1 }}>
+                    {classCount} {classCount === 1 ? 'class' : 'classes'}
+                  </div>
+                </>
+              )}
             </div>
           )
         },
@@ -213,8 +237,8 @@ export function TeacherAllocationGrid() {
 
       {/* Helper hint */}
       <div style={{ fontSize: 11, color: '#4B5275', marginBottom: 8 }}>
-        Read-only summary. Each cell shows <strong style={{ color: '#13111E' }}>periods (class count)</strong>.
-        Edit the Period Allocation tab to change totals — teacher assignments reflow automatically.
+        <strong style={{ color: '#13111E' }}>Click any cell</strong> to split that subject across sections.
+        Cell shows <em>periods (class count)</em>. Totals sync to the Period Allocation matrix automatically.
       </div>
 
       <DataGrid<Row>
@@ -230,6 +254,15 @@ export function TeacherAllocationGrid() {
           paste: false, search: true, transpose: true, bulkActions: false,
         }}
       />
+
+      {/* Per-section split modal */}
+      {editTarget && (
+        <TeacherAllocationModal
+          teacher={editTarget.teacher}
+          subject={editTarget.subject}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
     </div>
   )
 }
