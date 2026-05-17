@@ -1,32 +1,32 @@
 /**
- * Step 1 — Structure (user-facing)
+ * Step 2 — Subjects & Timing (user-facing)
  *
- * Spec internal: Step 1 — Academic structure builder.
+ * Spec internal: Steps 2 (subject intelligence), 3 (timetable type),
+ * 4 (shift & timing).
  *
  * Sub-tabs:
- *   1. School & Board  — board, country, grade groups, scale
- *   2. Classes         — class–section roster (DataGrid)
- *
- * The Bell schedule moved to Step 2 (Subjects & Timing).
+ *   1. Subjects  — scholastic / co-scholastic catalog (DataGrid)
+ *   2. Timing    — bell schedule (days, periods, breaks)
  */
 
 import { useState } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import { ScopeMatrixModal } from '@/components/DataGrid/ScopeMatrixModal'
-import { ClassesGrid } from '@/components/master/EntityGrids'
-import { Step1Org } from './step1-org'
-import { School, GraduationCap } from 'lucide-react'
-import type { Section, ScopeMatrix } from '@/types'
+import { SubjectsGrid } from '@/components/master/EntityGrids'
+import { StepBell } from './step-bell'
+import { BookOpen, Clock } from 'lucide-react'
+import type { Subject, ScopeMatrix } from '@/types'
 
-type Sub = 'school' | 'classes'
+type Sub = 'subjects' | 'timing'
 
-export function StepStructure() {
-  const [sub, setSub] = useState<Sub>('school')
+export function StepSubjectsTiming() {
+  const [sub, setSub] = useState<Sub>('subjects')
   const store = useTimetableStore() as any
-  const { sections, staff, setSections, config } = store
+  const { subjects, config } = store
+  const setSubjects = store.setSubjects ?? store.setLegacySubjects
   const periods = store.periods ?? []
   const workDays: string[] = config?.workDays ?? ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY']
-  const [scopeTarget, setScopeTarget] = useState<Section | null>(null)
+  const [scopeTarget, setScopeTarget] = useState<Subject | null>(null)
 
   return (
     <div style={{ padding: '20px 24px 0', maxWidth: 1280, margin: '0 auto' }}>
@@ -34,32 +34,31 @@ export function StepStructure() {
         display: 'flex', gap: 4, marginBottom: 14,
         background: '#F8F7FF', padding: 4, borderRadius: 10, width: 'fit-content',
       }}>
-        <SubTab active={sub === 'school'}  onClick={() => setSub('school')}  icon={<School size={13} />}         label="School & Board" />
-        <SubTab active={sub === 'classes'} onClick={() => setSub('classes')} icon={<GraduationCap size={13} />}  label="Classes" />
+        <SubTab active={sub === 'subjects'} onClick={() => setSub('subjects')} icon={<BookOpen size={13} />} label="Subjects" />
+        <SubTab active={sub === 'timing'}   onClick={() => setSub('timing')}   icon={<Clock    size={13} />} label="Timing" />
       </div>
 
-      {sub === 'school' && <Step1Org />}
-
-      {sub === 'classes' && (
+      {sub === 'subjects' && (
         <div style={{ padding: '4px 0 24px' }}>
-          <ClassesGrid
-            sections={sections}
-            setSections={setSections}
-            staff={staff}
+          <SubjectsGrid
+            subjects={subjects}
+            setSubjects={setSubjects}
             onScope={(s) => setScopeTarget(s)}
           />
         </div>
       )}
 
+      {sub === 'timing' && <StepBell />}
+
       {scopeTarget && (
         <ScopeMatrixModal
           entityName={scopeTarget.name}
-          entityKind="Section"
+          entityKind="Subject"
           scope={scopeTarget.scope}
           workDays={workDays}
           periods={periods}
           onSave={(nextScope: ScopeMatrix | undefined) => {
-            setSections(sections.map((s: Section) => s.id === scopeTarget.id ? { ...s, scope: nextScope } : s))
+            setSubjects(subjects.map((s: Subject) => s.id === scopeTarget.id ? { ...s, scope: nextScope } : s))
           }}
           onClose={() => setScopeTarget(null)}
         />
