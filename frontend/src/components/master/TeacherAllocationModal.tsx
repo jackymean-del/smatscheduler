@@ -14,9 +14,10 @@ import { useMemo, useState, useEffect } from 'react'
 import type { Section, Staff } from '@/types'
 import { useTimetableStore } from '@/store/timetableStore'
 import { parseAllocation } from '@/lib/allocationSyntax'
-import { X, Users, BookOpen, Save, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { X, Users, BookOpen, Save, AlertTriangle, CheckCircle2, Trophy } from 'lucide-react'
 import { explainAssignment } from '@/lib/explanationEngine'
 import { ExplanationInfoIcon } from './ExplanationPopover'
+import { CandidateComparisonModal } from './CandidateComparisonModal'
 
 interface Props {
   teacher: string
@@ -65,6 +66,7 @@ export function TeacherAllocationModal({ teacher, subject, onClose }: Props) {
   }
 
   const [rows, setRows] = useState<Row[]>(() => buildRows())
+  const [compareSection, setCompareSection] = useState<string | null>(null)
   // Reset rows if (teacher, subject) changes
   useEffect(() => { setRows(buildRows()) /* eslint-disable-next-line */ }, [teacher, subject])
 
@@ -240,17 +242,35 @@ export function TeacherAllocationModal({ teacher, subject, onClose }: Props) {
                       />
                     </td>
                     <td style={{ padding: '8px 6px', textAlign: 'center' }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 4,
-                        fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono', monospace",
-                        color: status === 'over' ? '#DC2626'
-                          : status === 'match' ? '#16A34A'
-                          : status === 'partial' ? '#D4920E'
-                          : '#8B87AD',
-                      }}>
-                        {status === 'over'    && <AlertTriangle size={11} />}
-                        {status === 'match'   && <CheckCircle2 size={11} />}
-                        {available > 0 ? `+${available - r.thisTeacher}` : `0`}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono', monospace",
+                          color: status === 'over' ? '#DC2626'
+                            : status === 'match' ? '#16A34A'
+                            : status === 'partial' ? '#D4920E'
+                            : '#8B87AD',
+                        }}>
+                          {status === 'over'    && <AlertTriangle size={11} />}
+                          {status === 'match'   && <CheckCircle2 size={11} />}
+                          {available > 0 ? `+${available - r.thisTeacher}` : `0`}
+                        </span>
+                        {r.target > 0 && (
+                          <button
+                            onClick={() => setCompareSection(r.section)}
+                            title="Compare candidates for this section"
+                            style={{
+                              background: 'transparent', border: '1px solid #ECEAFB',
+                              borderRadius: 5, padding: '2px 5px',
+                              cursor: 'pointer', color: '#7C6FE0',
+                              display: 'inline-flex', alignItems: 'center',
+                            }}
+                            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = '#F5F2FF'}
+                            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = 'transparent'}
+                          >
+                            <Trophy size={10} />
+                          </button>
+                        )}
                       </span>
                     </td>
                   </tr>
@@ -279,6 +299,20 @@ export function TeacherAllocationModal({ teacher, subject, onClose }: Props) {
         </div>
 
       </div>
+
+      {/* Compare candidates modal — opens on Trophy button click */}
+      {compareSection && (() => {
+        const sec = sections.find((s: Section) => s.name === compareSection)
+        if (!sec || !subjMeta) return null
+        return (
+          <CandidateComparisonModal
+            section={sec}
+            subject={subjMeta}
+            onClose={() => setCompareSection(null)}
+            onAssigned={() => setRows(buildRows())}
+          />
+        )
+      })()}
     </div>
   )
 }
