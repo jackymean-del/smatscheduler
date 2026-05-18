@@ -15,7 +15,7 @@
  *   - All DataGrid features (paste, transpose, CSV, undo, etc.)
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import type { Subject, Section, Period } from '@/types'
 import { DataGrid, DataGridColumn } from '@/components/DataGrid/DataGrid'
@@ -26,7 +26,8 @@ import {
   computeCapacity, capacityForSection, inferBandFromSection,
   utilisationStatus,
 } from '@/lib/capacityEngine'
-import { Sparkles, Grid3x3 } from 'lucide-react'
+import { Sparkles, Grid3x3, Trophy } from 'lucide-react'
+import { CandidateComparisonModal } from './CandidateComparisonModal'
 
 interface Row {
   sectionName: string
@@ -48,6 +49,9 @@ export function AllocationGrid() {
   const { sections, subjects, subjectAllocations, config } = store
   const periods: Period[] = store.periods ?? []
   const workDays: string[] = config?.workDays ?? ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY']
+
+  // Compare-candidates trigger — opens CandidateComparisonModal for one (section, subject)
+  const [compareTarget, setCompareTarget] = useState<{ section: Section; subject: Subject } | null>(null)
 
   const cap = useMemo(() => computeCapacity(workDays, periods), [workDays, periods])
 
@@ -184,6 +188,35 @@ export function AllocationGrid() {
                   pointerEvents: 'none' as const,
                 }}>!</span>
               )}
+              {/* Compare-candidates trigger — bottom-left of cell */}
+              {parsed?.valid && parsed.weeklyTotal > 0 && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    const sec = (sections as Section[]).find(s => s.name === row.sectionName)
+                    if (sec) setCompareTarget({ section: sec, subject: sub })
+                  }}
+                  title="Compare candidate teachers for this slot"
+                  style={{
+                    position: 'absolute' as const, bottom: 2, left: 4,
+                    background: 'transparent', border: 'none', padding: 1,
+                    cursor: 'pointer', color: '#7C6FE0',
+                    display: 'inline-flex', alignItems: 'center',
+                    opacity: 0.55,
+                    transition: 'opacity 0.12s, transform 0.12s',
+                  }}
+                  onMouseEnter={e => {
+                    (e.currentTarget as HTMLButtonElement).style.opacity = '1'
+                    ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.2)'
+                  }}
+                  onMouseLeave={e => {
+                    (e.currentTarget as HTMLButtonElement).style.opacity = '0.55'
+                    ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'
+                  }}
+                >
+                  <Trophy size={10} />
+                </button>
+              )}
             </div>
           )
         },
@@ -278,6 +311,15 @@ export function AllocationGrid() {
           paste: true, search: true, transpose: true, bulkActions: true,
         }}
       />
+
+      {/* Compare candidates modal — opens on Trophy button click */}
+      {compareTarget && (
+        <CandidateComparisonModal
+          section={compareTarget.section}
+          subject={compareTarget.subject}
+          onClose={() => setCompareTarget(null)}
+        />
+      )}
     </div>
   )
 }
