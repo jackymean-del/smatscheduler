@@ -157,6 +157,10 @@ export function DataGrid<T>({
   // v3: drag-fill state — source cell + current drag target
   const [fillFrom, setFillFrom] = useState<{ r: number; c: number } | null>(null)
   const [fillTo, setFillTo] = useState<{ r: number; c: number } | null>(null)
+  // v3.1: smart-fill — captures the source range (start..end) when drag begins
+  const [fillSourceRange, setFillSourceRange] = useState<
+    { startR: number; startC: number; endR: number; endC: number } | null
+  >(null)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [bulkOpen, setBulkOpen] = useState(false)
@@ -462,23 +466,123 @@ export function DataGrid<T>({
   }, [selection, selectionEnd, rows, columns, originalIndex, setCell, onChange])
 
   // ── v3: Drag-fill — copy source cell value across a rectangle ──
-  const applyDragFill = useCallback((from: { r: number; c: number }, to: { r: number; c: number }) => {
+  const applyDragFill = useCallback((
+    from: { r: number; c: number },
+    to: { r: number; c: number },
+    sourceRange?: { startR: number; startC: number; endR: number; endC: number } | null,
+  ) => {
     const r0 = Math.min(from.r, to.r), r1 = Math.max(from.r, to.r)
     const c0 = Math.min(from.c, to.c), c1 = Math.max(from.c, to.c)
-    if (r0 === r1 && c0 === c1) return  // single cell — nothing to fill
-    const sourceRow = filteredRows[from.r]
-    if (!sourceRow) return
-    const sourceCol = columns[from.c]
-    const sourceValue = getCell(sourceRow, sourceCol)
+    if (r0 === r1 && c0 === c1) return
+
+    // ── Smart-fill source detection ──
+    //   When the user had a MULTI-CELL range selected before dragging
+    //   the handle, we treat that range as the "pattern" and extrapolate.
+    //   For 1-D ranges of numeric values we detect arithmetic series;
+    //   otherwise we cycle through the source values.
+    const srcRange = sourceRange ?? {
+      startR: from.r, startC: from.c, endR: from.r, endC: from.c,
+    }
+    const srcR0 = Math.min(srcRange.startR, srcRange.endR)
+    const srcR1 = Math.max(srcRange.startR, srcRange.endR)
+    const srcC0 = Math.min(srcRange.startC, srcRange.endC)
+    const srcC1 = Math.max(srcRange.startC, srcRange.endC)
+    const srcWidth  = srcC1 - srcC0 + 1
+    const srcHeight = srcR1 - srcR0 + 1
+    const isVerticalRange   = srcWidth === 1 && srcHeight > 1
+    const isHorizontalRange = srcHeight === 1 && srcWidth > 1
+
+    // Compute fill direction: down if to.r > from.r, right if to.c > from.c.
+    // The fill rectangle EXTENDS from the source — the target overlaps the
+    // source on one edge, so we need to skip those source cells.
     let next = rows.slice()
+
+    // Helper: gather source numeric values along the active axis
+    const collectSeries = (axis: 'vertical' | 'horizontal'): number[] => {
+      const vals: number[] = []
+      if (axis === 'vertical') {
+        for (let r = srcR0; r <= srcR1; r++) {
+          const row = filteredRows[r]
+          if (!row) return []
+          const v = getCell(row, columns[srcC0])
+          const n = parseFloat(String(v ?? ''))
+          if (isNaN(n)) return []
+          vals.push(n)
+        }
+      } else {
+        const row = filteredRows[srcR0]
+        if (!row) return []
+        for (let c = srcC0; c <= srcC1; c++) {
+          const v = getCell(row, columns[c])
+          const n = parseFloat(String(v ?? ''))
+          if (isNaN(n)) return []
+          vals.push(n)
+        }
+      }
+      return vals
+    }
+
+    // Detect arithmetic series — constant step between consecutive values
+    const detectArithmetic = (vals: number[]) => {
+      if (vals.length < 2) return null
+      const step = vals[1] - vals[0]
+      for (let i = 2; i < vals.length; i++) {
+        if (Math.abs((vals[i] - vals[i - 1]) - step) > 1e-9) return null
+      }
+      return { start: vals[0], step }
+    }
+
+    const isNumericCol = (col: DataGridColumn<T>) => col.type === 'number'
+
+    // ── Apply fill ──
     for (let r = r0; r <= r1; r++) {
       const origR = originalIndex(r)
       if (origR < 0) continue
       for (let c = c0; c <= c1; c++) {
-        if (r === from.r && c === from.c) continue  // skip source itself
+        // Skip source cells — the user's pattern stays intact
+        if (r >= srcR0 && r <= srcR1 && c >= srcC0 && c <= srcC1) continue
         const col = columns[c]
         if (col.readonly || col.type === 'computed') continue
-        next[origR] = setCell(next[origR], col, sourceValue)
+
+        let value: any = null
+
+        // Vertical fill (column extends down)
+        if (isVerticalRange && c === srcC0 && isNumericCol(col)) {
+          const series = collectSeries('vertical')
+          const arith = detectArithmetic(series)
+          if (arith) {
+            // Extrapolate: r relative to srcR1
+            const offset = r - srcR1
+            value = arith.start + (srcHeight - 1 + offset) * arith.step
+          } else if (series.length > 0) {
+            // Cycle through source values
+            const idx = (r - srcR1 - 1 + series.length * 100) % series.length
+            value = series[idx]
+          }
+        }
+        // Horizontal fill (row extends right)
+        else if (isHorizontalRange && r === srcR0 && isNumericCol(col)) {
+          const series = collectSeries('horizontal')
+          const arith = detectArithmetic(series)
+          if (arith) {
+            const offset = c - srcC1
+            value = arith.start + (srcWidth - 1 + offset) * arith.step
+          } else if (series.length > 0) {
+            const idx = (c - srcC1 - 1 + series.length * 100) % series.length
+            value = series[idx]
+          }
+        }
+
+        // Fallback: copy nearest source cell (existing behavior)
+        if (value === null) {
+          const srcRowIdx = isVerticalRange ? srcR0 : srcR0
+          const srcColIdx = isHorizontalRange ? srcC0 : srcC0
+          const srcRow = filteredRows[srcRowIdx]
+          const srcCol = columns[srcColIdx]
+          value = srcRow ? getCell(srcRow, srcCol) : null
+        }
+
+        next[origR] = setCell(next[origR], col, value)
       }
     }
     onChange(next)
@@ -489,16 +593,17 @@ export function DataGrid<T>({
     if (!fillFrom) return
     const onUp = () => {
       if (fillFrom && fillTo) {
-        applyDragFill(fillFrom, fillTo)
+        applyDragFill(fillFrom, fillTo, fillSourceRange)
         setSelection(fillFrom)
         setSelectionEnd(fillTo)
       }
       setFillFrom(null)
       setFillTo(null)
+      setFillSourceRange(null)
     }
     window.addEventListener('mouseup', onUp)
     return () => window.removeEventListener('mouseup', onUp)
-  }, [fillFrom, fillTo, applyDragFill])
+  }, [fillFrom, fillTo, fillSourceRange, applyDragFill])
 
   // ── v2: Fill Down (Ctrl+D) ───────────────────────────────
   const applyFillDown = useCallback(() => {
@@ -835,7 +940,12 @@ export function DataGrid<T>({
                   })()
                   const isFillSource = fillFrom?.r === ri && fillFrom?.c === ci
                   // Show fill handle on the selected cell (with no range), when not editing
-                  const showFillHandle = isSelected && !selectionEnd && !editing && !col.readonly && col.type !== 'computed'
+                  // v3.1: fill handle anchors on bottom-right of the selection
+                  //       range (single cell OR multi-cell range)
+                  const rangeMaxR = selection ? Math.max(selection.r, selectionEnd?.r ?? selection.r) : -1
+                  const rangeMaxC = selection ? Math.max(selection.c, selectionEnd?.c ?? selection.c) : -1
+                  const showFillHandle = rangeMaxR === ri && rangeMaxC === ci
+                    && !editing && !col.readonly && col.type !== 'computed'
                   return (
                     <td key={col.key}
                       onMouseDown={e => {
@@ -897,10 +1007,20 @@ export function DataGrid<T>({
                           onMouseDown={e => {
                             e.stopPropagation()
                             e.preventDefault()
+                            // Capture the current selection as the source range
+                            // — drives smart-fill (arithmetic series detection)
+                            if (selection) {
+                              setFillSourceRange({
+                                startR: selection.r,
+                                startC: selection.c,
+                                endR:   selectionEnd?.r ?? selection.r,
+                                endC:   selectionEnd?.c ?? selection.c,
+                              })
+                            }
                             setFillFrom({ r: ri, c: ci })
                             setFillTo({ r: ri, c: ci })
                           }}
-                          title="Drag to fill"
+                          title="Drag to fill — selects pattern from current range"
                           style={{
                             position: 'absolute' as const,
                             right: -3, bottom: -3,
