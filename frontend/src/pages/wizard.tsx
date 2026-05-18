@@ -4,32 +4,23 @@ import { useAuthStore } from "@/store/authStore"
 import { StepResourcesV2 }         from "@/routes/wizard/step-resources-v2"
 import { StepBell }                from "@/routes/wizard/step-bell"
 import { StepAllocation }          from "@/routes/wizard/step-allocation"
-import { StepConstraints }         from "@/routes/wizard/step-constraints"
+import { StepStudentGroups }       from "@/routes/wizard/step-student-groups"
 import { Step6Generate }           from "@/routes/wizard/step6-generate"
 import { CheckCircle2 } from "lucide-react"
 
-// ── 5-step user-facing wizard (final spec flow) ──
-//   1. Resources       — AI counts: courses/teachers/subjects/rooms
+// ── 5-step user-facing wizard ──────────────────────────────────
+//   1. Resources       — Courses / teachers / subjects / rooms
 //   2. Shifts & Timing — Bell schedule (days, periods, breaks)
-//   3. Allocation      — Period × Subject + Student Strengths (2 tabs)
-//   4. Constraint      — Scope rules + compliance
+//   3. Allocation      — Period × Subject + Teacher Allocation (2 tabs)
+//   4. Student Groups  — Preference matrix + grouping rules + AI groups
 //   5. Generate        — AI builds the timetable
-const STEPS = [StepResourcesV2, StepBell, StepAllocation, StepConstraints, Step6Generate]
+const STEPS = [StepResourcesV2, StepBell, StepAllocation, StepStudentGroups, Step6Generate]
 
-// User-facing 5-step model. Internal step implementations unchanged —
-// we just relabel + reorder presentation while the engine consumes the
-// original data flow described in the schedU implementation doc.
-//
-//   Structure   = School/board/grades  (Step1Org)
-//   Resources   = Days/periods + Teachers/Subjects/Rooms (StepBell, StepResources)
-//   Allocations = Section-Subject strength matrix (StepSectionStrengths)
-//   Constraints = Scope rules per entity (review existing scope from Resources)
-//   Generate    = AI builds the timetable (Step6Generate)
 const STEP_META = [
-  { label:"Resources",       sub:"Student courses, teachers, subjects & rooms", icon:"📥", color:"#7C6FE0" },
+  { label:"Resources",       sub:"Courses, teachers, subjects & rooms",         icon:"📥", color:"#7C6FE0" },
   { label:"Shifts & Timing", sub:"Days, periods & breaks",                      icon:"🔔", color:"#9B8EF5" },
-  { label:"Allocation",      sub:"Section × subject strength matrix",           icon:"📊", color:"#7C6FE0" },
-  { label:"Constraint",      sub:"Scope rules & compliance",                    icon:"🔒", color:"#9B8EF5" },
+  { label:"Allocation",      sub:"Period × subject + teacher assignment",       icon:"📊", color:"#7C6FE0" },
+  { label:"Student Groups",  sub:"Preferences, grouping rules & AI groups",     icon:"👥", color:"#9B8EF5" },
   { label:"Generate",        sub:"AI builds your timetable",                    icon:"✨", color:"#D4920E" },
 ]
 

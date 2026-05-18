@@ -4,17 +4,16 @@
  * Two sub-tabs:
  *   1. Period Allocation   — Class × Subject periods-per-week matrix
  *                            (drives the engine's time allotment)
- *   2. Student Strengths   — Section × Subject student-count matrix
- *                            (drives dynamic optional-block grouping)
+ *   2. Teacher Allocation  — Mockup-style teacher summary card
+ *                            (type chips, load bars, status badges)
  */
 
 import { useState } from 'react'
 import { AllocationGrid } from '@/components/master/AllocationGrid'
-import { TeacherAllocationGrid } from '@/components/master/TeacherAllocationGrid'
-import { StepSectionStrengths } from './step-section-strengths'
-import { Grid3x3, Users2, Users } from 'lucide-react'
+import { TeacherAllocationSummary } from '@/components/master/TeacherAllocationSummary'
+import { Grid3x3, Users } from 'lucide-react'
 
-type Sub = 'periods' | 'teachers' | 'strengths'
+type Sub = 'periods' | 'teachers'
 
 export function StepAllocation() {
   const [sub, setSub] = useState<Sub>('periods')
@@ -32,7 +31,10 @@ export function StepAllocation() {
             Allocation
           </h2>
           <div style={{ fontSize: 12, color: '#4B5275', marginTop: 3 }}>
-            <em style={{ color: '#7C6FE0' }}>AI</em> uses both matrices: periods drive how long each subject runs, strengths drive cross-class grouping.
+            <em style={{ color: '#7C6FE0' }}>AI</em> uses both matrices: periods drive how long each subject runs, teacher allocation drives who teaches what.
+            {' '}<span style={{ fontFamily: "'DM Mono', monospace", color: '#8B87AD', fontSize: 11 }}>
+              Syntax: 5 | 5+1 | 3(2X) | 2L
+            </span>
           </div>
         </div>
       </div>
@@ -42,18 +44,12 @@ export function StepAllocation() {
         display: 'flex', gap: 4, marginBottom: 14,
         background: '#F8F7FF', padding: 4, borderRadius: 10, width: 'fit-content',
       }}>
-        <SubTab active={sub === 'periods'}   onClick={() => setSub('periods')}   icon={<Grid3x3 size={13} />} label="Period Allocation" />
-        <SubTab active={sub === 'teachers'}  onClick={() => setSub('teachers')}  icon={<Users   size={13} />} label="Teacher Allocation" />
-        <SubTab active={sub === 'strengths'} onClick={() => setSub('strengths')} icon={<Users2  size={13} />} label="Student Strengths" />
+        <SubTab active={sub === 'periods'}  onClick={() => setSub('periods')}  icon={<Grid3x3 size={13} />} label="Period Allocation · Classes" />
+        <SubTab active={sub === 'teachers'} onClick={() => setSub('teachers')} icon={<Users   size={13} />} label="Teacher Allocation" />
       </div>
 
-      {sub === 'periods'   && <AllocationGrid />}
-      {sub === 'teachers'  && <TeacherAllocationGrid />}
-      {sub === 'strengths' && (
-        <div style={{ marginLeft: -24, marginRight: -24, marginTop: -20 /* compensate for nested padding */ }}>
-          <StepSectionStrengths />
-        </div>
-      )}
+      {sub === 'periods'  && <AllocationGrid />}
+      {sub === 'teachers' && <TeacherAllocationSummary />}
     </div>
   )
 }

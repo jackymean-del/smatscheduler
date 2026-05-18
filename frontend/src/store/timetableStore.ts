@@ -228,6 +228,10 @@ interface ScheduState {
   // ── Teacher Availability — pre-solve per-teacher slot matrix ──
   teacherAvailability: TeacherAvailability
 
+  // ── Step 4 — Subject Grouping Rules (per-subject cross-class behavior) ──
+  //    Shape: { [subjectName]: GroupingBehavior }
+  subjectGroupingRules: Record<string, 'NO_GROUPING' | 'SAME_GRADE_ONLY' | 'CROSS_GRADE_ALLOWED' | 'FLEXIBLE_GROUPING'>
+
   // ── Doc Part 3 — Dynamic Learning Groups from last solve ──
   dynamicLearningGroups: Array<{
     id: string
@@ -354,6 +358,9 @@ interface ScheduState {
   setBlockedSlots: (b: Array<{ section: string; day: string; periodId: string; reasons: Array<{ category: string; detail: string; affected?: string }> }>) => void
   // ── Doc Part 3 — DLG setter ──
   setDynamicLearningGroups: (g: ScheduState['dynamicLearningGroups']) => void
+  // ── Step 4 — Subject Grouping Rules ──
+  setSubjectGroupingRule: (subject: string, behavior: 'NO_GROUPING' | 'SAME_GRADE_ONLY' | 'CROSS_GRADE_ALLOWED' | 'FLEXIBLE_GROUPING') => void
+  setSubjectGroupingRules: (rules: ScheduState['subjectGroupingRules']) => void
 
   // ── Teacher Availability actions ──
   /** Replace the entire availability matrix */
@@ -402,6 +409,7 @@ const initialState: Omit<ScheduState,
   | 'setBlockedSlots'
   | 'setDynamicLearningGroups'
   | 'setTeacherAvailability' | 'setTeacherSlotStatus' | 'clearTeacherAvailability'
+  | 'setSubjectGroupingRule' | 'setSubjectGroupingRules'
   | 'resetWizard' | 'resetAll'
 > = {
   step: 1,
@@ -464,6 +472,7 @@ const initialState: Omit<ScheduState,
   blockedSlots: [],
   dynamicLearningGroups: [],
   teacherAvailability: {},
+  subjectGroupingRules: {},
   schedulingMode: 'period-based',
   workingDaysPerYear: 220,
 }
@@ -726,6 +735,11 @@ export const useTimetableStore = create<ScheduState>()(
           return { teacherAllocations: tNext, subjectAllocations: saNext }
         }),
 
+        setSubjectGroupingRule: (subject, behavior) => set(s => ({
+          subjectGroupingRules: { ...s.subjectGroupingRules, [subject]: behavior },
+        })),
+        setSubjectGroupingRules: (rules) => set({ subjectGroupingRules: rules }),
+
         togglePeriodShiftable: (periodId) => set((s) => ({
           periods: s.periods.map(p =>
             p.id === periodId ? { ...p, shiftable: !p.shiftable } : p
@@ -818,6 +832,12 @@ export const useTimetableStore = create<ScheduState>()(
           schedulingMode: state.schedulingMode,
           workingDaysPerYear: state.workingDaysPerYear,
           teacherAvailability: state.teacherAvailability,
+          subjectGroupingRules: state.subjectGroupingRules,
+          sectionStrengths: state.sectionStrengths,
+          subjectAllocations: state.subjectAllocations,
+          teacherAllocations: state.teacherAllocations,
+          dynamicLearningGroups: state.dynamicLearningGroups,
+          blockedSlots: state.blockedSlots,
         }),
       }
     ),
