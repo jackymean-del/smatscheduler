@@ -127,6 +127,9 @@ export function Step6Generate() {
       setTeacherTT(output.teacherTT)
       setConflicts(output.conflicts)
       setSolverOutput(output)
+      // Persist blocked-slot telemetry to the store so any view (timetable
+      // cells, dashboard, conflict panel) can surface "why is this empty?"
+      ;(store as any).setBlockedSlots?.(output.blockedSlots ?? [])
       setSuggestions(suggestions)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

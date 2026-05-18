@@ -213,6 +213,14 @@ interface ScheduState {
   //      - Edit either side → the other reflows.
   teacherAllocations: Record<string, Record<string, Record<string, number>>>
 
+  // ── Doc Part 2 — Blocked slots from last solve (location-side telemetry) ──
+  blockedSlots: Array<{
+    section: string
+    day: string
+    periodId: string
+    reasons: Array<{ category: string; detail: string; affected?: string }>
+  }>
+
   // ─────────────────────────────────────────────────────────────
   //  ACTIONS — Schedu model
   // ─────────────────────────────────────────────────────────────
@@ -322,6 +330,9 @@ interface ScheduState {
   setTeacherAllocations: (t: Record<string, Record<string, Record<string, number>>>) => void
   setTeacherAllocationCell: (teacher: string, section: string, subject: string, periods: number) => void
 
+  // ── Doc Part 2 — Blocked slots setter ──
+  setBlockedSlots: (b: Array<{ section: string; day: string; periodId: string; reasons: Array<{ category: string; detail: string; affected?: string }> }>) => void
+
   resetWizard: () => void
   resetAll: () => void
 }
@@ -358,6 +369,7 @@ const initialState: Omit<ScheduState,
   | 'setSectionStrengths' | 'upsertSectionStrength'
   | 'setSubjectAllocations' | 'setSubjectAllocationCell'
   | 'setTeacherAllocations' | 'setTeacherAllocationCell'
+  | 'setBlockedSlots'
   | 'resetWizard' | 'resetAll'
 > = {
   step: 1,
@@ -417,6 +429,7 @@ const initialState: Omit<ScheduState,
   sectionStrengths: [],
   subjectAllocations: {},
   teacherAllocations: {},
+  blockedSlots: [],
   schedulingMode: 'period-based',
   workingDaysPerYear: 220,
 }
@@ -625,6 +638,7 @@ export const useTimetableStore = create<ScheduState>()(
 
         // ── Doc 2 Step 3 — Teacher Allocation actions (bidirectional sync) ──
         setTeacherAllocations: (teacherAllocations) => set({ teacherAllocations }),
+        setBlockedSlots: (blockedSlots) => set({ blockedSlots }),
         setTeacherAllocationCell: (teacher, section, subject, periods) => set(st => {
           // 1. Write the teacher's new cell value
           const tRow = { ...(st.teacherAllocations[teacher] ?? {}) }

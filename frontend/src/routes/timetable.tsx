@@ -757,6 +757,7 @@ export function TimetablePage() {
         selectedEntity={entityFilter}
         showTeacher={showTeacher}
         showRoom={showRoom}
+        blockedSlots={(store as any).blockedSlots ?? []}
         onCellClick={(section, day, periodId) => {
           if (editMode) setEditTarget({ section, day, periodId })
         }}

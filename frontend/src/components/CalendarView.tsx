@@ -13,6 +13,8 @@ import { useState, useMemo } from "react"
 import type { Period, Section, Staff } from "@/types"
 import type { ClassTimetable, TeacherSchedule } from "@/types"
 import { getSubjectColor } from "@/lib/orgData"
+import type { BlockedSlot } from "@/lib/schedulingEngine"
+import { BlockedSlotIcon, buildBlockedMap } from "@/components/master/BlockedSlotIcon"
 
 // ─────────────────────────────────────────────
 // Types
@@ -36,6 +38,9 @@ export interface CalendarViewProps {
   showRoom: boolean
   onCellClick?: (section: string, day: string, periodId: string) => void
   absentHighlights?: Array<{ teacher: string; day: string }>
+  /** Optional: solver-emitted reasons for empty cells.
+   *  When present, empty cells get a clickable ? icon → reasons popover. */
+  blockedSlots?: BlockedSlot[]
 }
 
 // ─────────────────────────────────────────────
@@ -272,8 +277,14 @@ export function CalendarView({
   staff, sections, subjects, substitutions,
   viewMode, selectedEntity,
   showTeacher, showRoom,
-  onCellClick, absentHighlights,
+  onCellClick, absentHighlights, blockedSlots,
 }: CalendarViewProps) {
+
+  // O(1) lookup map for blocked-slot reasons (Doc Part 2)
+  const blockedMap = useMemo(
+    () => buildBlockedMap(blockedSlots ?? []),
+    [blockedSlots],
+  )
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [calMode, setCalMode] = useState<CalMode>("week")
@@ -500,7 +511,16 @@ export function CalendarView({
                       return (
                         <td key={dayKey} style={{ border: "1px solid #E8E4FF", padding: 3, verticalAlign: "top" as const, background: teacherAbsent ? "#FFFBEB" : undefined }}>
                           {!cell?.subject
-                            ? <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center", color: "#D8D2FF", fontSize: 11 }}>—</div>
+                            ? (() => {
+                                const reasons = blockedMap.get(`${sec.name}|${dayKey}|${p.id}`)
+                                return (
+                                  <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: "#D8D2FF", fontSize: 11 }}>
+                                    {reasons && reasons.length > 0
+                                      ? <BlockedSlotIcon reasons={reasons} />
+                                      : '—'}
+                                  </div>
+                                )
+                              })()
                             : <EventChip
                                 subject={cell.subject}
                                 section={sec.name}
@@ -613,7 +633,16 @@ export function CalendarView({
                       return (
                         <td key={p.id} style={{ border: "1px solid #E8E4FF", padding: 3, verticalAlign: "top" as const, background: teacherAbsent ? "#FFFBEB" : undefined }}>
                           {!cell?.subject
-                            ? <div style={{ minHeight: 36, display: "flex", alignItems: "center", justifyContent: "center", color: "#D8D2FF", fontSize: 11 }}>—</div>
+                            ? (() => {
+                                const reasons = blockedMap.get(`${sec.name}|${dayKey}|${p.id}`)
+                                return (
+                                  <div style={{ minHeight: 36, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: "#D8D2FF", fontSize: 11 }}>
+                                    {reasons && reasons.length > 0
+                                      ? <BlockedSlotIcon reasons={reasons} />
+                                      : '—'}
+                                  </div>
+                                )
+                              })()
                             : <EventChip
                                 subject={cell.subject}
                                 section={sec.name}
