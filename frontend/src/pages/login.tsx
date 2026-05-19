@@ -14,6 +14,7 @@
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { Loader2, Info } from 'lucide-react'
+import { AppFooter } from '@/components/AppFooter'
 
 function GoogleMark() {
   return (
@@ -72,9 +73,13 @@ export function LoginPage() {
     <div style={{
       minHeight: '100vh',
       background: '#F5F4F0',
+      display: 'flex', flexDirection: 'column',
+      fontFamily: "'Inter', -apple-system, sans-serif",
+    }}>
+    <div style={{
+      flex: 1,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '32px 16px',
-      fontFamily: "'Inter', -apple-system, sans-serif",
     }}>
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -251,6 +256,8 @@ export function LoginPage() {
         </div>
 
       </div>
+    </div>
+    <AppFooter />
     </div>
   )
 }

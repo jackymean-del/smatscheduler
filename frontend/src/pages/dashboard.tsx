@@ -12,6 +12,7 @@
 import { useState, useMemo } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { useTimetableStore } from '@/store/timetableStore'
+import { AppFooter } from '@/components/AppFooter'
 import {
   Home, CalendarDays, Calendar, BarChart2,
   Users, Database, Settings,
@@ -201,6 +202,7 @@ function CreateTimetableModal({ onClose }: { onClose: () => void }) {
   const BOARDS: BoardKey[] = ['CBSE', 'ICSE', 'IB', 'State', 'Custom']
 
   const handleOpen = () => {
+    useTimetableStore.getState().setConfig({ timetableName: name })
     window.location.href = '/wizard'
   }
 
@@ -923,6 +925,7 @@ export function DashboardPage() {
             </div>
           </div>
 
+          <AppFooter style={{ marginTop: 32, marginLeft: -28, marginRight: -28, marginBottom: -24 }} />
         </main>
       </div>
 

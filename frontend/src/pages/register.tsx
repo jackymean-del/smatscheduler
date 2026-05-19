@@ -11,6 +11,7 @@
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { Loader2 } from 'lucide-react'
+import { AppFooter } from '@/components/AppFooter'
 
 // ── Google "G" mark ───────────────────────────────────────────
 function GoogleMark() {
@@ -135,9 +136,10 @@ export function RegisterPage() {
 
   return (
     <div style={{
-      display: 'flex', minHeight: '100vh',
+      display: 'flex', flexDirection: 'column', minHeight: '100vh',
       fontFamily: "'Inter', -apple-system, sans-serif",
     }}>
+    <div style={{ display: 'flex', flex: 1 }}>
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         @keyframes spin { to { transform: rotate(360deg) } }
@@ -397,6 +399,8 @@ export function RegisterPage() {
 
         </div>
       </main>
+    </div>
+    <AppFooter />
     </div>
   )
 }
