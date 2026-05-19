@@ -108,6 +108,13 @@ const ROW_BG: Record<RowType, string> = {
 
 // ── Rotation day type ─────────────────────────────────────────
 interface RotDay { full: string; short: string }
+
+// ── Day-off rule (class-specific off days) ────────────────────
+interface DayOffRule {
+  id:      string
+  day:     string    // e.g. 'Sat', 'Mon'
+  classes: string[]  // class keys that are off on this day
+}
 const DEFAULT_ROT_DAYS: RotDay[] = [
   { full: 'Day 1', short: 'D1' }, { full: 'Day 2', short: 'D2' },
   { full: 'Day 3', short: 'D3' }, { full: 'Day 4', short: 'D4' },
@@ -319,6 +326,8 @@ interface SavedBell {
   cycleWeeks?: number; useDayNames?: boolean; cycleStartDate?: string
   fixedDuration?: boolean; rotationDays?: RotDay[]
   weekWorkDays?: Record<number, string[]>   // per-week custom working days (multi-week cycles)
+  dayStartTimes?: Record<string, string>    // per-day start time overrides (dayKey → HH:MM)
+  dayOffRules?:   DayOffRule[]              // class-specific off-day rules
   // Per-day bell config
   varyByDay?: boolean; dayRows?: Record<string, BellRow[]>
 }
@@ -858,6 +867,8 @@ export function StepBell() {
   const [fixedDuration,  setFixedDuration]  = useState<boolean>( () => _saved?.fixedDuration  ?? false)
   const [rotationDays,   setRotationDays]   = useState<RotDay[]>(() => _saved?.rotationDays   ?? DEFAULT_ROT_DAYS)
   const [weekWorkDays,   setWeekWorkDays]   = useState<Record<number, string[]>>(() => _saved?.weekWorkDays ?? {})
+  const [dayStartTimes,  setDayStartTimes]  = useState<Record<string, string>>( () => _saved?.dayStartTimes  ?? {})
+  const [dayOffRules,    setDayOffRules]    = useState<DayOffRule[]>(           () => _saved?.dayOffRules    ?? [])
   // ── Per-day bell variation ────────────────────────────────────
   const [varyByDay,    setVaryByDay]    = useState<boolean>(                  () => _saved?.varyByDay ?? false)
   const [activeDayTab, setActiveDayTab] = useState<string>('')
@@ -873,11 +884,11 @@ export function StepBell() {
     localStorage.setItem(BELL_KEY, JSON.stringify({
       shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
       cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
-      weekWorkDays, varyByDay, dayRows,
+      weekWorkDays, dayStartTimes, dayOffRules, varyByDay, dayRows,
     } satisfies SavedBell))
   }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
       cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
-      weekWorkDays, varyByDay, dayRows])
+      weekWorkDays, dayStartTimes, dayOffRules, varyByDay, dayRows])
 
   // ── Day keys ─────────────────────────────────────────────────
   // • day-names mode  → rotation day shorts (D1, D2, …)
@@ -897,6 +908,18 @@ export function StepBell() {
 
   // Stable string to use as effect dependency for dayKeys identity
   const dayKeysStr = useMemo(() => dayKeys.join(','), [dayKeys])
+
+  /**
+   * Effective start time for the currently displayed bell grid.
+   * Returns the per-day override when Vary-by-day is active and an override
+   * has been set, otherwise falls back to the global shift start time.
+   */
+  const activeStartTime = useMemo(() =>
+    varyByDay && activeDayTab && dayStartTimes[activeDayTab]
+      ? dayStartTimes[activeDayTab]
+      : startTime,
+    [varyByDay, activeDayTab, dayStartTimes, startTime],
+  )
 
   /** Rows currently active in the bell grid (uniform or per-day tab). */
   const displayRows: BellRow[] = useMemo(() =>
@@ -957,7 +980,7 @@ export function StepBell() {
   }
 
   // ── Derived: start-time cascades ──────────────────────────────
-  const startTimes = useMemo(() => computeStarts(startTime, displayRows), [startTime, displayRows])
+  const startTimes = useMemo(() => computeStarts(activeStartTime, displayRows), [activeStartTime, displayRows])
 
   // ── Partial-break detection ───────────────────────────────────
   const hasPartialBreaks = useMemo(() =>
@@ -988,14 +1011,14 @@ export function StepBell() {
     // Cache filtered timelines by class key to avoid redundant passes
     const cache = new Map<string, string[]>()
     const getFiltered = (key: string) => {
-      if (!cache.has(key)) cache.set(key, computeStartsFiltered(startTime, displayRows, key))
+      if (!cache.has(key)) cache.set(key, computeStartsFiltered(activeStartTime, displayRows, key))
       return cache.get(key)!
     }
     return displayRows.map((row, i) => {
       const repKey = row.classes[0] ?? ALL_CLASS_KEYS[0]
       return getFiltered(repKey)[i]
     })
-  }, [hasPartialBreaks, displayRows, startTime, startTimes])
+  }, [hasPartialBreaks, displayRows, activeStartTime, startTimes])
 
   /**
    * School end time = start of the last row (using filtered clock) + its duration.
@@ -1004,9 +1027,9 @@ export function StepBell() {
    * doubling up in the end-time calculation.
    */
   const endTime = useMemo(() => {
-    if (displayRows.length === 0) return startTime
+    if (displayRows.length === 0) return activeStartTime
     return addMins(rowStartTimes[displayRows.length - 1], displayRows[displayRows.length - 1].duration)
-  }, [displayRows, rowStartTimes, startTime])
+  }, [displayRows, rowStartTimes, activeStartTime])
 
   // ── Timeline data: per-group filtered if partial breaks exist ─
   const groupTimelineData = useMemo(() => {
@@ -1014,7 +1037,7 @@ export function StepBell() {
       const groupKeys = CLASSES.filter(c => c.group === gm.group).map(c => c.key)
       const repKey    = groupKeys[0]
       const fStarts   = hasPartialBreaks
-        ? computeStartsFiltered(startTime, rows, repKey)
+        ? computeStartsFiltered(activeStartTime, displayRows, repKey)
         : startTimes
 
       const data = displayRows
@@ -1023,7 +1046,7 @@ export function StepBell() {
 
       return { gm, data }
     })
-  }, [hasPartialBreaks, startTime, rows, startTimes])
+  }, [hasPartialBreaks, activeStartTime, displayRows, startTimes])
 
   // Master timeline (all rows, no filter)
   const masterTimelineData = useMemo(() =>
@@ -1064,7 +1087,7 @@ export function StepBell() {
   }
 
   const handleGenerateFromCw = () => {
-    const newRows = buildBellRowsFromCw(startTime, periodDur, maxPeriods, cwRows)
+    const newRows = buildBellRowsFromCw(activeStartTime, periodDur, maxPeriods, cwRows)
     setDisplayRows(newRows)
     setShowCwPanel(false)
   }
@@ -1072,7 +1095,7 @@ export function StepBell() {
   // ── Other handlers ────────────────────────────────────────────
   const handleEndTimeEdit = (val: string) => {
     if (!val || !/^\d{2}:\d{2}$/.test(val)) return
-    const target = toMins(val) - toMins(startTime)
+    const target = toMins(val) - toMins(activeStartTime)
     if (target <= 0) return
     const current = displayRows.reduce((s, r) => s + r.duration, 0)
     const diff    = target - current
@@ -1182,7 +1205,7 @@ export function StepBell() {
   }
 
   const handleAISuggest = () => {
-    let curMins = toMins(startTime)
+    let curMins = toMins(activeStartTime)
     const result: BellRow[] = []
     result.push({ id: makeId(), name: 'Assembly', type: 'assembly', duration: 15, classes: [...ALL_CLASS_KEYS] })
     curMins += 15
@@ -1509,6 +1532,102 @@ export function StepBell() {
                   )
                 })}
               </div>
+
+              {/* ── Day Off Rules ── */}
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #F3F4F6' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: dayOffRules.length > 0 ? 10 : 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Day off rules</span>
+                    {dayOffRules.length > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', borderRadius: 10, padding: '1px 7px' }}>
+                        {dayOffRules.length}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setDayOffRules(prev => [...prev, {
+                      id: makeId(),
+                      day: ALL_DAYS.find(d => !workDays.includes(d)) ?? workDays[workDays.length - 1] ?? 'Sat',
+                      classes: [],
+                    }])}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      fontSize: 11, fontWeight: 600, color: '#D97706',
+                      background: '#FFFBEB', border: '1px solid #FDE68A',
+                      borderRadius: 6, padding: '4px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                    }}>
+                    <Plus size={10} /> Add rule
+                  </button>
+                </div>
+
+                {dayOffRules.length === 0 ? (
+                  <div style={{ fontSize: 11, color: '#D1D5DB', fontStyle: 'italic' }}>
+                    e.g. Saturday off for Nursery, LKG &amp; UKG
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {dayOffRules.map(rule => (
+                      <div key={rule.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                        background: '#FFFBEB', border: '1px solid #FDE68A',
+                        borderRadius: 8, padding: '8px 10px',
+                      }}>
+                        {/* Day selector */}
+                        <select
+                          value={rule.day}
+                          onChange={e => setDayOffRules(prev => prev.map(r => r.id === rule.id ? { ...r, day: e.target.value } : r))}
+                          style={{
+                            padding: '4px 8px', borderRadius: 6, border: '1px solid #FDE68A',
+                            fontSize: 12, fontFamily: 'inherit', outline: 'none',
+                            fontWeight: 700, color: '#B45309', background: '#FEF9EE', flexShrink: 0,
+                          }}>
+                          {ALL_DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+
+                        <span style={{ fontSize: 11, color: '#9CA3AF', flexShrink: 0 }}>off for</span>
+
+                        {/* Class picker — reuse existing component */}
+                        <ClassPicker
+                          classes={rule.classes}
+                          onChange={cls => setDayOffRules(prev => prev.map(r => r.id === rule.id ? { ...r, classes: cls } : r))}
+                          rowId={`dor-${rule.id}`}
+                          openId={openPicker}
+                          setOpenId={setOpenPicker}
+                        />
+
+                        {/* Inline class chips for quick glance */}
+                        {rule.classes.length > 0 && rule.classes.length < ALL_CLASS_KEYS.length && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {rule.classes.slice(0, 6).map(k => {
+                              const cls = CLASSES.find(c => c.key === k)
+                              return (
+                                <span key={k} style={{
+                                  padding: '1px 7px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                                  background: '#fff', border: '1px solid #FDE68A', color: '#B45309',
+                                }}>
+                                  {cls?.short ?? k}
+                                </span>
+                              )
+                            })}
+                            {rule.classes.length > 6 && (
+                              <span style={{ fontSize: 10, color: '#9CA3AF', alignSelf: 'center' }}>
+                                +{rule.classes.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Delete */}
+                        <button
+                          onClick={() => setDayOffRules(prev => prev.filter(r => r.id !== rule.id))}
+                          style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#FCA5A5', padding: 3, display: 'flex', flexShrink: 0 }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1668,6 +1787,64 @@ export function StepBell() {
                       {Object.keys(dayRows).filter(k => dayKeys.includes(k)).length} of {dayKeys.length} customised
                     </span>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Per-day start/end time override ── */}
+            {varyByDay && activeDayTab && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+                background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: 9,
+                padding: '9px 14px', marginBottom: 8,
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#7C3AED', flexShrink: 0 }}>
+                  {activeDayTab.replace(/^w(\d+)-(.+)$/, 'Week $1 · $2')}
+                </span>
+
+                {/* Start time override */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>Starts</span>
+                  <input
+                    type="time"
+                    value={dayStartTimes[activeDayTab] ?? startTime}
+                    onChange={e => setDayStartTimes(prev => ({ ...prev, [activeDayTab]: e.target.value }))}
+                    style={{
+                      padding: '4px 9px', borderRadius: 6,
+                      border: dayStartTimes[activeDayTab] ? '1.5px solid #7C6FE0' : '1px solid #DDD6FE',
+                      fontSize: 12, fontFamily: 'inherit', outline: 'none',
+                      color: dayStartTimes[activeDayTab] ? '#7C3AED' : '#374151',
+                      background: '#fff', fontWeight: dayStartTimes[activeDayTab] ? 700 : 400,
+                    }}
+                  />
+                  {dayStartTimes[activeDayTab] && (
+                    <button
+                      onClick={() => setDayStartTimes(prev => { const n = { ...prev }; delete n[activeDayTab]; return n })}
+                      title="Reset to default start time"
+                      style={{ fontSize: 10, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontFamily: 'inherit' }}>
+                      reset
+                    </button>
+                  )}
+                </div>
+
+                <span style={{ fontSize: 11, color: '#C4B5FD' }}>→</span>
+
+                {/* End time (derived) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>Ends</span>
+                  <span style={{
+                    padding: '4px 9px', borderRadius: 6, background: '#fff',
+                    border: '1px solid #DDD6FE', fontSize: 12,
+                    fontFamily: "'DM Mono',monospace", fontWeight: 700, color: '#374151',
+                  }}>
+                    {fmt12(endTime, use12h)}
+                  </span>
+                </div>
+
+                {!dayStartTimes[activeDayTab] && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: '#C4B5FD', flexShrink: 0 }}>
+                    using default · {fmt12(startTime, use12h)}
+                  </span>
                 )}
               </div>
             )}
