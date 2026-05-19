@@ -1550,6 +1550,7 @@ export function StepBell() {
                         <div>🔀 Multi-week cycles — Week 1 ≠ Week 2</div>
                         <div>⏰ Different start time &amp; period length per day</div>
                         <div>🔤 Named day rotations (Day A / Day B…)</div>
+                        <div>🏫 Multiple shifts with independent timetables per class group</div>
                       </div>
                     )}
                   </button>
@@ -1946,20 +1947,10 @@ export function StepBell() {
           {/* ─── ADVANCED: MULTI-SHIFT CONFIGURATION ─── */}
           {isAdvanced && (
           <div style={{ marginBottom: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <SH>SHIFTS</SH>
-              <button onClick={addShift} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                fontSize: 11, fontWeight: 600, color: '#7C3AED',
-                background: '#F5F3FF', border: '1px solid #DDD6FE',
-                borderRadius: 6, padding: '4px 11px', cursor: 'pointer', fontFamily: 'inherit',
-              }}>
-                <Plus size={10} /> Add Shift
-              </button>
-            </div>
+            <SH>SHIFTS</SH>
 
-            {/* Shift tabs */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+            {/* Shift tabs + inline add button */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
               {shifts.map(s => {
                 const active = s.id === activeShiftId
                 return (
@@ -1988,6 +1979,14 @@ export function StepBell() {
                   </button>
                 )
               })}
+              {/* Inline + button */}
+              <button onClick={addShift} title="Add Shift" style={{
+                width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                border: '1.5px dashed #C4B5FD', background: '#F5F3FF',
+                color: '#7C3AED', fontSize: 18, fontWeight: 700, lineHeight: 1,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s',
+              }}>+</button>
             </div>
 
             {/* Active shift configuration card */}
