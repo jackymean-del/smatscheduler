@@ -106,14 +106,28 @@ const ROW_BG: Record<RowType, string> = {
   dispersal:    '#FFF1F2',
 }
 
-// ── Schedule type options ──────────────────────────────────────
-const SCHEDULE_TYPES = [
-  { key: 'weekly',       label: 'Weekly',       sub: 'Same schedule every week' },
-  { key: 'fortnightly',  label: 'Fortnightly',  sub: '2-week alternating schedule' },
-  { key: 'custom-cycle', label: 'Custom Cycle', sub: '3+ week schedule' },
-  { key: 'day-rotation', label: 'Day Rotation', sub: 'Custom named days (A/B, 8-day…)' },
-] as const
-type ScheduleType    = typeof SCHEDULE_TYPES[number]['key']
+// ── Rotation day type ─────────────────────────────────────────
+interface RotDay { full: string; short: string }
+const DEFAULT_ROT_DAYS: RotDay[] = [
+  { full: 'Day 1', short: 'D1' }, { full: 'Day 2', short: 'D2' },
+  { full: 'Day 3', short: 'D3' }, { full: 'Day 4', short: 'D4' },
+  { full: 'Day 5', short: 'D5' },
+]
+
+// ── Cycle start date hint ─────────────────────────────────────
+function cycleStartHint(dateStr: string): string {
+  if (!dateStr) return ''
+  try {
+    const d    = new Date(dateStr + 'T00:00:00')
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+    const jan1 = new Date(d.getFullYear(), 0, 1)
+    const wk   = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7)
+    return `${days[d.getDay()]}, ${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })} · Week ${wk}`
+  } catch { return '' }
+}
+
+// Keep ScheduleType/PeriodCfgStyle as derived aliases for the store
+type ScheduleType    = 'weekly' | 'fortnightly' | 'custom-cycle' | 'day-rotation'
 type PeriodCfgStyle  = 'uniform' | 'custom-day'
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -301,7 +315,11 @@ const BELL_KEY = 'schedu-bell-v2'
 interface SavedBell {
   shiftName: string; startTime: string; use12h: boolean
   periodDur: number; maxPeriods: number; workDays: string[]; rows: BellRow[]
-  scheduleType?: ScheduleType; periodCfgStyle?: PeriodCfgStyle
+  // Rhythm
+  cycleWeeks?: number; useDayNames?: boolean; cycleStartDate?: string
+  fixedDuration?: boolean; rotationDays?: RotDay[]
+  // Per-day bell config
+  varyByDay?: boolean; dayRows?: Record<string, BellRow[]>
 }
 function loadSaved(): SavedBell | null {
   try { const s = localStorage.getItem(BELL_KEY); return s ? JSON.parse(s) as SavedBell : null }
@@ -832,9 +850,16 @@ export function StepBell() {
     return buildRows(cnt, dur)
   })
 
-  const [scheduleType,    setScheduleType]    = useState<ScheduleType>(   () => _saved?.scheduleType   ?? 'weekly')
-  const [pendingSchedType, setPendingSchedType] = useState<ScheduleType | null>(null)
-  const [periodCfgStyle,  setPeriodCfgStyle]  = useState<PeriodCfgStyle>(() => _saved?.periodCfgStyle ?? 'uniform')
+  // ── Schedule rhythm ──────────────────────────────────────────
+  const [cycleWeeks,     setCycleWeeks]     = useState<number>(  () => _saved?.cycleWeeks     ?? 1)
+  const [useDayNames,    setUseDayNames]    = useState<boolean>( () => _saved?.useDayNames    ?? false)
+  const [cycleStartDate, setCycleStartDate] = useState<string>(  () => _saved?.cycleStartDate ?? '')
+  const [fixedDuration,  setFixedDuration]  = useState<boolean>( () => _saved?.fixedDuration  ?? false)
+  const [rotationDays,   setRotationDays]   = useState<RotDay[]>(() => _saved?.rotationDays   ?? DEFAULT_ROT_DAYS)
+  // ── Per-day bell variation ────────────────────────────────────
+  const [varyByDay,    setVaryByDay]    = useState<boolean>(                  () => _saved?.varyByDay ?? false)
+  const [activeDayTab, setActiveDayTab] = useState<string>('')
+  const [dayRows,      setDayRows]      = useState<Record<string, BellRow[]>>(() => _saved?.dayRows   ?? {})
 
   const [openPicker,    setOpenPicker]    = useState<string | null>(null)
   const [editingEnd,    setEditingEnd]    = useState(false)
@@ -845,19 +870,48 @@ export function StepBell() {
   useEffect(() => {
     localStorage.setItem(BELL_KEY, JSON.stringify({
       shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
-      scheduleType, periodCfgStyle,
+      cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
+      varyByDay, dayRows,
     } satisfies SavedBell))
-  }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows, scheduleType, periodCfgStyle])
+  }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
+      cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
+      varyByDay, dayRows])
+
+  // ── Day keys (either working days or named rotation days) ─────
+  const dayKeys = useMemo(() =>
+    useDayNames ? rotationDays.map(d => d.short) : workDays,
+    [useDayNames, rotationDays, workDays],
+  )
+
+  /** Rows currently active in the bell grid (uniform or per-day tab). */
+  const displayRows: BellRow[] = useMemo(() =>
+    varyByDay && activeDayTab ? (dayRows[activeDayTab] ?? rows) : rows,
+    [varyByDay, activeDayTab, dayRows, rows],
+  )
+
+  /** Route row edits to the right bucket: uniform or the active day tab. */
+  const setDisplayRows = (updater: BellRow[] | ((p: BellRow[]) => BellRow[])) => {
+    if (varyByDay && activeDayTab) {
+      setDayRows(prev => {
+        const cur  = prev[activeDayTab] ?? rows
+        const next = typeof updater === 'function' ? updater(cur) : updater
+        return { ...prev, [activeDayTab]: next }
+      })
+    } else {
+      if (typeof updater === 'function') setRows(updater)
+      else setRows(updater)
+    }
+  }
 
   // ── Derived: start-time cascades ──────────────────────────────
-  const startTimes = useMemo(() => computeStarts(startTime, rows), [startTime, rows])
+  const startTimes = useMemo(() => computeStarts(startTime, displayRows), [startTime, displayRows])
 
   // ── Partial-break detection ───────────────────────────────────
   const hasPartialBreaks = useMemo(() =>
-    rows.some(r =>
+    displayRows.some(r =>
       (r.type === 'short-break' || r.type === 'lunch') &&
       r.classes.length > 0 && r.classes.length < ALL_CLASS_KEYS.length,
-    ), [rows])
+    ), [displayRows])
 
   /**
    * Per-row display start times for the bell grid.
@@ -881,14 +935,14 @@ export function StepBell() {
     // Cache filtered timelines by class key to avoid redundant passes
     const cache = new Map<string, string[]>()
     const getFiltered = (key: string) => {
-      if (!cache.has(key)) cache.set(key, computeStartsFiltered(startTime, rows, key))
+      if (!cache.has(key)) cache.set(key, computeStartsFiltered(startTime, displayRows, key))
       return cache.get(key)!
     }
-    return rows.map((row, i) => {
+    return displayRows.map((row, i) => {
       const repKey = row.classes[0] ?? ALL_CLASS_KEYS[0]
       return getFiltered(repKey)[i]
     })
-  }, [hasPartialBreaks, rows, startTime, startTimes])
+  }, [hasPartialBreaks, displayRows, startTime, startTimes])
 
   /**
    * School end time = start of the last row (using filtered clock) + its duration.
@@ -897,9 +951,9 @@ export function StepBell() {
    * doubling up in the end-time calculation.
    */
   const endTime = useMemo(() => {
-    if (rows.length === 0) return startTime
-    return addMins(rowStartTimes[rows.length - 1], rows[rows.length - 1].duration)
-  }, [rows, rowStartTimes, startTime])
+    if (displayRows.length === 0) return startTime
+    return addMins(rowStartTimes[displayRows.length - 1], displayRows[displayRows.length - 1].duration)
+  }, [displayRows, rowStartTimes, startTime])
 
   // ── Timeline data: per-group filtered if partial breaks exist ─
   const groupTimelineData = useMemo(() => {
@@ -910,7 +964,7 @@ export function StepBell() {
         ? computeStartsFiltered(startTime, rows, repKey)
         : startTimes
 
-      const data = rows
+      const data = displayRows
         .map((row, i) => ({ row, start: fStarts[i] }))
         .filter(({ row }) => row.classes.some(k => groupKeys.includes(k)))
 
@@ -920,20 +974,18 @@ export function StepBell() {
 
   // Master timeline (all rows, no filter)
   const masterTimelineData = useMemo(() =>
-    rows.map((row, i) => ({ row, start: startTimes[i] })),
-    [rows, startTimes],
+    displayRows.map((row, i) => ({ row, start: startTimes[i] })),
+    [displayRows, startTimes],
   )
 
   // ── Class-wise breaks panel ───────────────────────────────────
   const handleOpenCwPanel = () => {
-    // Pre-populate from existing break rows if not yet configured
     if (cwRows.length === 0) {
-      const existingBreaks = rows.filter(r => r.type === 'short-break' || r.type === 'lunch')
+      const existingBreaks = displayRows.filter(r => r.type === 'short-break' || r.type === 'lunch')
       if (existingBreaks.length > 0) {
         setCwRows(existingBreaks.map(r => {
-          const idx = rows.indexOf(r)
-          // afterPeriod = number of teaching rows that appear before this break
-          const afterPeriod = rows.slice(0, idx).filter(rr => rr.type === 'teaching').length
+          const idx = displayRows.indexOf(r)
+          const afterPeriod = displayRows.slice(0, idx).filter(rr => rr.type === 'teaching').length
           return {
             id:          r.id,
             name:        r.name,
@@ -960,7 +1012,7 @@ export function StepBell() {
 
   const handleGenerateFromCw = () => {
     const newRows = buildBellRowsFromCw(startTime, periodDur, maxPeriods, cwRows)
-    setRows(newRows)
+    setDisplayRows(newRows)
     setShowCwPanel(false)
   }
 
@@ -969,10 +1021,10 @@ export function StepBell() {
     if (!val || !/^\d{2}:\d{2}$/.test(val)) return
     const target = toMins(val) - toMins(startTime)
     if (target <= 0) return
-    const current = rows.reduce((s, r) => s + r.duration, 0)
+    const current = displayRows.reduce((s, r) => s + r.duration, 0)
     const diff    = target - current
     if (diff === 0) return
-    setRows(prev => {
+    setDisplayRows(prev => {
       const next = [...prev]
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].type === 'teaching') {
@@ -988,13 +1040,13 @@ export function StepBell() {
   const handlePeriodDurChange = (d: number) => {
     const v = Math.max(10, d)
     setPeriodDur(v)
-    setRows(prev => prev.map(r => r.type === 'teaching' ? { ...r, duration: v } : r))
+    setDisplayRows(prev => prev.map(r => r.type === 'teaching' ? { ...r, duration: v } : r))
   }
 
   const handleMaxPeriodsChange = (n: number) => {
     const v = Math.max(1, Math.min(16, n))
     setMaxPeriods(v)
-    setRows(prev => {
+    setDisplayRows(prev => {
       const asm  = prev.find(r => r.type === 'assembly')  ?? mkAssembly()
       const dis  = prev.find(r => r.type === 'dispersal') ?? mkDispersal()
       const brks = prev.filter(r => r.type === 'short-break' || r.type === 'lunch')
@@ -1006,26 +1058,38 @@ export function StepBell() {
     })
   }
 
+  // ── Vary-by-day toggle ────────────────────────────────────────
+  const handleToggleVaryByDay = (on: boolean) => {
+    if (on) {
+      const init: Record<string, BellRow[]> = {}
+      dayKeys.forEach(k => { init[k] = rows.map(r => ({ ...r, id: makeId() })) })
+      setDayRows(init)
+      setActiveDayTab(dayKeys[0] ?? '')
+    } else {
+      setActiveDayTab('')
+    }
+    setVaryByDay(on)
+  }
+
   const toggleDay = (d: string) =>
     setWorkDays(w => w.includes(d) ? w.filter(x => x !== d) : [...w, d])
 
   const updateRow = (id: string, patch: Partial<BellRow>) =>
-    setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
+    setDisplayRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
 
-  const deleteRow = (id: string) => setRows(prev => prev.filter(x => x.id !== id))
+  const deleteRow = (id: string) => setDisplayRows(prev => prev.filter(x => x.id !== id))
 
   const insertBreak = (afterIndex: number, name: string) => {
     const type: RowType = /lunch/i.test(name) ? 'lunch' : 'short-break'
     const newRow: BellRow = { id: makeId(), name, type, duration: type === 'lunch' ? 30 : 10, classes: [...ALL_CLASS_KEYS] }
-    setRows(prev => { const n = [...prev]; n.splice(afterIndex + 1, 0, newRow); return n })
+    setDisplayRows(prev => { const n = [...prev]; n.splice(afterIndex + 1, 0, newRow); return n })
   }
 
   const insertPeriodAt = (afterIndex: number) => {
-    // Period number = count of teaching rows before this position + 1
-    const count  = rows.slice(0, afterIndex + 1).filter(r => r.type === 'teaching').length
+    const count  = displayRows.slice(0, afterIndex + 1).filter(r => r.type === 'teaching').length
     const newRow = mkPeriod(count + 1, periodDur)
     newRow.id    = makeId()
-    setRows(prev => { const n = [...prev]; n.splice(afterIndex + 1, 0, newRow); return n })
+    setDisplayRows(prev => { const n = [...prev]; n.splice(afterIndex + 1, 0, newRow); return n })
   }
 
   /**
@@ -1045,20 +1109,19 @@ export function StepBell() {
    * that appears BEFORE the break (not the total count of all teaching rows).
    */
   const insertSplitPeriods = (afterIndex: number) => {
-    const breakRow = rows[afterIndex]
+    const breakRow = displayRows[afterIndex]
     if (!breakRow) return
     const classesInBreak    = breakRow.classes
     const classesNotInBreak = ALL_CLASS_KEYS.filter(k => !classesInBreak.includes(k))
     if (classesNotInBreak.length === 0 || classesInBreak.length === 0) return
 
-    // Period name: count only teaching rows BEFORE the break
-    const periodsBeforeBreak = rows.slice(0, afterIndex).filter(r => r.type === 'teaching').length
+    const periodsBeforeBreak = displayRows.slice(0, afterIndex).filter(r => r.type === 'teaching').length
     const name               = `Period ${periodsBeforeBreak + 1}`
 
     const periodA: BellRow = { id: makeId(), name, type: 'teaching', duration: periodDur, classes: classesNotInBreak }
     const periodB: BellRow = { id: makeId(), name, type: 'teaching', duration: periodDur, classes: classesInBreak    }
 
-    setRows(prev => {
+    setDisplayRows(prev => {
       const next = [...prev]
       next.splice(afterIndex + 1, 0, periodA, periodB)
       return next
@@ -1085,38 +1148,23 @@ export function StepBell() {
       result.splice(2 + Math.ceil(maxPeriods / 2), 0, { id: makeId(), name: 'Lunch Break', type: 'lunch', duration: 30, classes: [...ALL_CLASS_KEYS] })
     result.push({ id: makeId(), name: 'Afternoon Break', type: 'short-break', duration: 10, classes: [...ALL_CLASS_KEYS] })
     result.push({ id: makeId(), name: 'Dispersal', type: 'dispersal', duration: 5, classes: [...ALL_CLASS_KEYS] })
-    setRows(result)
+    setDisplayRows(result)
   }
 
   const capacity = useMemo(() => {
-    const tRows = rows.filter(r => r.type === 'teaching')
+    const tRows = displayRows.filter(r => r.type === 'teaching')
     return CLASS_GROUPS.map(gm => {
       const gk = CLASSES.filter(c => c.group === gm.group).map(c => c.key)
       return { label: gm.group, desc: gm.desc, color: gm.color, count: tRows.filter(r => gk.some(k => r.classes.includes(k))).length * workDays.length }
     })
-  }, [rows, workDays.length])
-
-  // ── Schedule type ─────────────────────────────────────────────
-  const handleScheduleTypeClick = (key: ScheduleType) => {
-    if (key === scheduleType) return
-    setPendingSchedType(key)
-  }
-  const handleConfirmScheduleType = () => {
-    if (!pendingSchedType) return
-    setScheduleType(pendingSchedType)
-    setPendingSchedType(null)
-    // Reset bell rows and class-wise breaks
-    setRows(buildRows(maxPeriods, periodDur))
-    setCwRows([])
-    setShowCwPanel(false)
-  }
+  }, [displayRows, workDays.length])
 
   const handleNext = () => {
     setConfig({
       workDays: workDays.map(d => DAY_TO_FULL[d] ?? d.toUpperCase()),
       startTime, endTime, periodsPerDay: maxPeriods, defaultSessionDuration: periodDur,
     } as any)
-    setBreaks(rows.filter(r => r.type !== 'teaching').map(r => ({
+    setBreaks(displayRows.filter(r => r.type !== 'teaching').map(r => ({
       id: r.id, name: r.name, duration: r.duration, type: r.type as any, shiftable: r.type === 'short-break',
     })))
     setStep(2)
@@ -1153,113 +1201,132 @@ export function StepBell() {
         {/* ══════════ LEFT ══════════ */}
         <div>
 
-          {/* ─── SCHEDULE TYPE ─── */}
+          {/* ─── SCHEDULE RHYTHM ─── */}
           <div style={{ marginBottom: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               <Calendar size={15} color="#7C6FE0" />
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#13111E', letterSpacing: '-0.2px' }}>Schedule Type</span>
-            </div>
-
-            {/* 4-option grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-              {SCHEDULE_TYPES.map(st => {
-                const active = scheduleType === st.key
-                return (
-                  <button key={st.key} onClick={() => handleScheduleTypeClick(st.key)} style={{
-                    padding: '14px 10px', borderRadius: 10, textAlign: 'center',
-                    border: active ? '2px solid #7C6FE0' : '1.5px solid #E5E7EB',
-                    background: active ? '#F5F2FF' : '#fff',
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    transition: 'border-color .15s, background .15s',
-                  }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#7C6FE0' : '#13111E', marginBottom: 4 }}>
-                      {st.label}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.4 }}>{st.sub}</div>
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Warning banner (shown when user clicks a different type) */}
-            {pendingSchedType && (
-              <div style={{
-                marginTop: 12, padding: '12px 14px',
-                background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8,
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#13111E', letterSpacing: '-0.2px' }}>Schedule Rhythm</span>
+              {/* Derived label badge */}
+              <span style={{
+                marginLeft: 4, fontSize: 10, fontWeight: 800, padding: '2px 9px',
+                borderRadius: 10, background: '#EDE9FF', color: '#7C3AED', letterSpacing: '0.03em',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-                  <AlertTriangle size={13} color="#D97706" style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, color: '#92400E' }}>
-                    Changing schedule type will clear all existing configurations.
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={handleConfirmScheduleType} style={{
-                    padding: '5px 16px', borderRadius: 6, border: 'none',
-                    background: '#D97706', color: '#fff',
-                    fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                  }}>Confirm</button>
-                  <button onClick={() => setPendingSchedType(null)} style={{
-                    padding: '5px 14px', borderRadius: 6,
-                    border: '1px solid #E5E7EB', background: '#fff', color: '#374151',
-                    fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                  }}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ─── DEFAULT SCHEDULE ─── */}
-          <div style={{ marginBottom: 20 }}>
-            {/* Section header */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginBottom: 12 }}>
-              <Clock size={15} color="#7C6FE0" style={{ marginTop: 1 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#13111E', letterSpacing: '-0.2px' }}>Default Schedule</div>
-                <div style={{ fontSize: 12, color: '#9CA3AF', marginTop: 1 }}>Configure periods and breaks for your timetable</div>
-              </div>
+                {useDayNames ? `${rotationDays.length}-day rotation`
+                  : cycleWeeks === 1 ? 'Weekly'
+                  : cycleWeeks === 2 ? 'Fortnightly'
+                  : `${cycleWeeks}-week cycle`}
+              </span>
             </div>
 
-            {/* Period Configuration Style */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
-                <SlidersHorizontal size={12} color="#7C6FE0" />
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#7C6FE0', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                  Period Configuration Style
-                </span>
+            <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB', padding: '16px 18px' }}>
+
+              {/* Row 1: cycle stepper OR day-names note + toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                {!useDayNames && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 12, color: '#6B7280' }}>Repeats every</span>
+                    {/* Stepper */}
+                    <div style={{ display: 'inline-flex', alignItems: 'center', border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+                      <button onClick={() => setCycleWeeks(w => Math.max(1, w - 1))}
+                        style={{ padding: '5px 11px', background: 'none', border: 'none', fontSize: 15, fontWeight: 700, color: cycleWeeks <= 1 ? '#D1D5DB' : '#7C6FE0', cursor: cycleWeeks <= 1 ? 'default' : 'pointer', fontFamily: 'inherit' }}>−</button>
+                      <span style={{ padding: '5px 12px', fontSize: 14, fontWeight: 800, color: '#13111E', fontFamily: "'DM Mono',monospace", borderLeft: '1px solid #E5E7EB', borderRight: '1px solid #E5E7EB', minWidth: 40, textAlign: 'center' }}>{cycleWeeks}</span>
+                      <button onClick={() => setCycleWeeks(w => Math.min(12, w + 1))}
+                        style={{ padding: '5px 11px', background: 'none', border: 'none', fontSize: 15, fontWeight: 700, color: '#7C6FE0', cursor: 'pointer', fontFamily: 'inherit' }}>+</button>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#6B7280' }}>{cycleWeeks === 1 ? 'week' : 'weeks'}</span>
+                  </div>
+                )}
+
+                {/* Day-names toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginLeft: useDayNames ? 0 : 'auto', userSelect: 'none' }}>
+                  <div style={{ position: 'relative', width: 34, height: 18, flexShrink: 0 }}>
+                    <input type="checkbox" checked={useDayNames} onChange={e => {
+                      const on = e.target.checked
+                      setUseDayNames(on)
+                      if (on && varyByDay) handleToggleVaryByDay(false)  // reset per-day if switching
+                    }} style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }} />
+                    <div style={{ position: 'absolute', inset: 0, borderRadius: 9, background: useDayNames ? '#7C6FE0' : '#E5E7EB', transition: 'background .2s' }} />
+                    <div style={{ position: 'absolute', top: 2, left: useDayNames ? 18 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' }} />
+                  </div>
+                  <span style={{ fontSize: 12, color: '#374151' }}>Use day names <span style={{ color: '#9CA3AF' }}>(A/B, 8-day…)</span></span>
+                </label>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {([
-                  { key: 'uniform',    label: 'Uniform Schedule',    desc: 'Same periods every working day. Simple and straightforward.' },
-                  { key: 'custom-day', label: 'Custom Day Schedule', desc: 'Different periods for different days. E.g., shorter Fridays.' },
-                ] as const).map(opt => {
-                  const active = periodCfgStyle === opt.key
-                  return (
-                    <button key={opt.key} onClick={() => setPeriodCfgStyle(opt.key)} style={{
-                      padding: '12px 14px', borderRadius: 10, textAlign: 'left',
-                      border: active ? '2px solid #7C6FE0' : '1.5px solid #E5E7EB',
-                      background: active ? '#F5F2FF' : '#fff',
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      display: 'flex', alignItems: 'flex-start', gap: 10,
-                      transition: 'border-color .15s, background .15s',
-                    }}>
-                      {/* Radio dot */}
-                      <div style={{
-                        width: 16, height: 16, borderRadius: '50%', flexShrink: 0, marginTop: 1,
-                        border: active ? '5px solid #7C6FE0' : '2px solid #D1D5DB',
-                        transition: 'border .15s',
-                      }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: active ? '#7C6FE0' : '#374151', marginBottom: 3 }}>
-                          {opt.label}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#6B7280', lineHeight: 1.45 }}>{opt.desc}</div>
+
+              {/* Cycle start date (when cycle > 1 week or day names on) */}
+              {(cycleWeeks > 1 || useDayNames) && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 6 }}>
+                    {useDayNames ? 'Rotation starts on' : 'Week 1 starts on'}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <input type="date" value={cycleStartDate} onChange={e => setCycleStartDate(e.target.value)}
+                      style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid #E5E7EB', fontSize: 13, fontFamily: 'inherit', color: '#13111E', outline: 'none' }} />
+                    {cycleStartDate && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                        <span style={{ fontSize: 11, color: '#22C55E' }}>✓</span>
+                        <span style={{ fontSize: 11, color: '#16A34A', fontWeight: 600 }}>
+                          {useDayNames ? 'Rotation' : 'Week 1'} starts on {cycleStartHint(cycleStartDate)}
+                        </span>
+                        <button onClick={() => setCycleStartDate('')}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', fontSize: 11, padding: 0, fontFamily: 'inherit' }}>Clear</button>
                       </div>
+                    )}
+                  </div>
+                  {/* Fixed duration — only for custom cycles ≥ 3 weeks */}
+                  {!useDayNames && cycleWeeks >= 3 && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer', userSelect: 'none' }}>
+                      <input type="checkbox" checked={fixedDuration} onChange={e => setFixedDuration(e.target.checked)}
+                        style={{ accentColor: '#7C6FE0', width: 14, height: 14 }} />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Fixed duration (non-repeating)</span>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>— runs once with a set start and end date</span>
+                    </label>
+                  )}
+                  {fixedDuration && !useDayNames && cycleWeeks >= 3 && (
+                    <div style={{ marginTop: 8, padding: '7px 12px', borderRadius: 7, background: '#FFFBEB', border: '1px solid #FDE68A', fontSize: 11, color: '#92400E' }}>
+                      This {cycleWeeks}-week program will run once without repeating.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Day rotation name editor */}
+              {useDayNames && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Rotation Days</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#7C6FE0' }}>{rotationDays.length} days in rotation</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '14px 1fr 56px 20px', gap: '6px 10px', alignItems: 'center', marginBottom: 4 }}>
+                    <span />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.06em' }}>FULL NAME</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.06em' }}>SHORT</span>
+                    <span />
+                  </div>
+                  {rotationDays.map((day, i) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '14px 1fr 56px 20px', gap: '6px 10px', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF', textAlign: 'right' }}>{i + 1}.</span>
+                      <input value={day.full} onChange={e => setRotationDays(d => d.map((x, j) => j === i ? { ...x, full: e.target.value } : x))}
+                        style={{ padding: '5px 9px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
+                      <input value={day.short} maxLength={4} onChange={e => setRotationDays(d => d.map((x, j) => j === i ? { ...x, short: e.target.value.toUpperCase() } : x))}
+                        style={{ padding: '5px 7px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 12, fontFamily: "'DM Mono',monospace", textAlign: 'center', fontWeight: 700, outline: 'none' }} />
+                      {rotationDays.length > 2
+                        ? <button onClick={() => setRotationDays(d => d.filter((_, j) => j !== i))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#FCA5A5', fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
+                        : <span />}
+                    </div>
+                  ))}
+                  {rotationDays.length < 20 && (
+                    <button onClick={() => {
+                      const n = rotationDays.length + 1
+                      setRotationDays(d => [...d, { full: `Day ${n}`, short: `D${n}` }])
+                    }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 2, background: 'none', border: 'none', cursor: 'pointer', color: '#7C6FE0', fontSize: 12, fontWeight: 600, fontFamily: 'inherit', padding: 0 }}>
+                      <Plus size={11} /> Add day
                     </button>
-                  )
-                })}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
+          </div>
 
           {/* ─── SHIFT CONFIGURATION ─── */}
           <div style={{ marginBottom: 20 }}>
@@ -1338,23 +1405,42 @@ export function StepBell() {
 
           {/* ─── BELL TIMING GRID ─── */}
           <div>
-            {/* Section header + Class-wise breaks button */}
+            {/* Section header + Vary-by-day toggle + Class-wise breaks button */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <SH>BELL TIMING GRID</SH>
-              <button
-                onClick={handleOpenCwPanel}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  padding: '5px 13px', borderRadius: 7,
-                  border: showCwPanel ? '1.5px solid #7C3AED' : '1.5px solid #C4B5FD',
-                  background: showCwPanel ? '#7C3AED' : '#F8F7FF',
-                  color: showCwPanel ? '#fff' : '#7C3AED',
-                  fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                  transition: 'all .15s',
-                }}
-              >
-                <Sparkles size={11} /> Class-wise breaks
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+
+                {/* Vary by day toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+                  <div style={{ position: 'relative', width: 30, height: 16, flexShrink: 0 }}>
+                    <input type="checkbox" checked={varyByDay}
+                      onChange={e => handleToggleVaryByDay(e.target.checked)}
+                      style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }} />
+                    <div style={{ position: 'absolute', inset: 0, borderRadius: 8, background: varyByDay ? '#7C6FE0' : '#E5E7EB', transition: 'background .2s' }} />
+                    <div style={{ position: 'absolute', top: 2, left: varyByDay ? 16 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' }} />
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: varyByDay ? '#7C6FE0' : '#9CA3AF', transition: 'color .15s' }}>
+                    Vary by {useDayNames ? 'day' : 'weekday'}
+                  </span>
+                </label>
+
+                <div style={{ width: 1, height: 14, background: '#E5E7EB', flexShrink: 0 }} />
+
+                <button
+                  onClick={handleOpenCwPanel}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '5px 13px', borderRadius: 7,
+                    border: showCwPanel ? '1.5px solid #7C3AED' : '1.5px solid #C4B5FD',
+                    background: showCwPanel ? '#7C3AED' : '#F8F7FF',
+                    color: showCwPanel ? '#fff' : '#7C3AED',
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                    transition: 'all .15s',
+                  }}
+                >
+                  <Sparkles size={11} /> Class-wise breaks
+                </button>
+              </div>
             </div>
 
             {/* Class-wise breaks panel */}
@@ -1371,7 +1457,36 @@ export function StepBell() {
               />
             )}
 
-            <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB' }}>
+            {/* Day tabs — shown when "Vary by day" is on */}
+            {varyByDay && dayKeys.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 2,
+                  background: '#F3F4F6', borderRadius: 9, padding: '3px 4px',
+                  border: '1px solid #E5E7EB',
+                }}>
+                  {dayKeys.map(k => (
+                    <button key={k} onClick={() => setActiveDayTab(k)} style={{
+                      padding: '4px 16px', borderRadius: 6,
+                      fontSize: 12, fontWeight: activeDayTab === k ? 700 : 500,
+                      background: activeDayTab === k ? '#fff' : 'transparent',
+                      color: activeDayTab === k ? '#7C6FE0' : '#6B7280',
+                      border: activeDayTab === k ? '1px solid #DDD6FE' : '1px solid transparent',
+                      boxShadow: activeDayTab === k ? '0 1px 4px rgba(124,111,224,.13)' : 'none',
+                      cursor: 'pointer', fontFamily: 'inherit', transition: 'all .12s',
+                    }}>{k}</button>
+                  ))}
+                </div>
+                {/* hint when a day has been customised */}
+                {Object.keys(dayRows).length > 0 && (
+                  <span style={{ marginLeft: 10, fontSize: 11, color: '#9CA3AF' }}>
+                    {Object.keys(dayRows).filter(k => dayRows[k] !== undefined).length} of {dayKeys.length} days configured
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div style={{ background: '#fff', borderRadius: 10, border: varyByDay ? '1.5px solid #DDD6FE' : '1px solid #E5E7EB' }}>
               {/* Table header */}
               <div style={{
                 display: 'grid',
@@ -1386,7 +1501,7 @@ export function StepBell() {
 
               {/* Rows */}
               <div>
-                {rows.map((row, i) => {
+                {displayRows.map((row, i) => {
                   const tm      = TYPE_META[row.type]
                   const start   = rowStartTimes[i] ?? '—'
                   const end     = addMins(start, row.duration)
@@ -1447,8 +1562,8 @@ export function StepBell() {
                           <Trash2 size={13} />
                         </button>
                       </div>
-                      {i < rows.length - 1 && (
-                        <GapRow afterIndex={i} rows={rows}
+                      {i < displayRows.length - 1 && (
+                        <GapRow afterIndex={i} rows={displayRows}
                           onInsertBreak={insertBreak}
                           onInsertPeriod={insertPeriodAt}
                           onInsertSplit={insertSplitPeriods}
@@ -1468,19 +1583,18 @@ export function StepBell() {
                   <Sparkles size={12} /> AI suggest timings
                 </button>
                 <button onClick={() => {
-                  const count = rows.filter(r => r.type === 'teaching').length
+                  const count = displayRows.filter(r => r.type === 'teaching').length
                   const nr    = mkPeriod(count + 1, periodDur); nr.id = makeId()
-                  setRows(prev => { const n = [...prev]; const di = n.findIndex(r => r.type === 'dispersal'); n.splice(di >= 0 ? di : n.length, 0, nr); return n })
+                  setDisplayRows(prev => { const n = [...prev]; const di = n.findIndex(r => r.type === 'dispersal'); n.splice(di >= 0 ? di : n.length, 0, nr); return n })
                 }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 14px', borderRadius: 7, border: '1px solid #E5E7EB', background: '#fff', fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer', fontFamily: 'inherit' }}>
                   <Plus size={12} /> Add period
                 </button>
-                <button onClick={() => setRows(buildRows(maxPeriods, periodDur))} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 14px', borderRadius: 7, border: '1px solid #E5E7EB', background: '#fff', fontSize: 12, fontWeight: 600, color: '#6B7280', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <button onClick={() => setDisplayRows(buildRows(maxPeriods, periodDur))} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 14px', borderRadius: 7, border: '1px solid #E5E7EB', background: '#fff', fontSize: 12, fontWeight: 600, color: '#6B7280', cursor: 'pointer', fontFamily: 'inherit' }}>
                   Reset to default
                 </button>
               </div>
             </div>
           </div>
-          </div>{/* end Default Schedule outer div */}
         </div>
 
         {/* ══════════ RIGHT (sticky) ══════════ */}
