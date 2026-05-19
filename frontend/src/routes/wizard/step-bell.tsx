@@ -322,6 +322,8 @@ const BELL_KEY = 'schedu-bell-v2'
 interface SavedBell {
   shiftName: string; startTime: string; use12h: boolean
   periodDur: number; maxPeriods: number; workDays: string[]; rows: BellRow[]
+  // Mode
+  scheduleMode?: 'standard' | 'advanced'
   // Rhythm
   cycleWeeks?: number; useDayNames?: boolean; cycleStartDate?: string
   fixedDuration?: boolean; rotationDays?: RotDay[]
@@ -861,6 +863,10 @@ export function StepBell() {
     return buildRows(cnt, dur)
   })
 
+  // ── Schedule mode ────────────────────────────────────────────
+  const [scheduleMode, setScheduleMode] = useState<'standard' | 'advanced'>(() => _saved?.scheduleMode ?? 'standard')
+  const isAdvanced = scheduleMode === 'advanced'
+
   // ── Schedule rhythm ──────────────────────────────────────────
   const [cycleWeeks,     setCycleWeeks]     = useState<number>(  () => _saved?.cycleWeeks     ?? 1)
   const [useDayNames,    setUseDayNames]    = useState<boolean>( () => _saved?.useDayNames    ?? false)
@@ -892,10 +898,12 @@ export function StepBell() {
       shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
       cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
       weekWorkDays, dayStartTimes, dayPeriodDurs, dayOffRules, varyByDay, dayRows,
+      scheduleMode,
     } satisfies SavedBell))
   }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
       cycleWeeks, useDayNames, cycleStartDate, fixedDuration, rotationDays,
-      weekWorkDays, dayStartTimes, dayPeriodDurs, dayOffRules, varyByDay, dayRows])
+      weekWorkDays, dayStartTimes, dayPeriodDurs, dayOffRules, varyByDay, dayRows,
+      scheduleMode])
 
   // ── Day keys ─────────────────────────────────────────────────
   // • day-names mode  → rotation day shorts (D1, D2, …)
@@ -1190,6 +1198,29 @@ export function StepBell() {
     })
   }
 
+  // ── Mode switch ───────────────────────────────────────────────
+  const handleSetMode = (mode: 'standard' | 'advanced') => {
+    if (mode === scheduleMode) return
+    if (mode === 'standard') {
+      // Warn only if advanced features are actively in use
+      const advancedInUse = varyByDay || useDayNames || cycleWeeks > 1
+      if (advancedInUse) {
+        setConfirmDialog({
+          msg: 'Switching to Standard mode will turn off per-day variations, day-name rotations, and multi-week cycles. Your bell rows and basic settings are kept. Continue?',
+          onConfirm: () => {
+            doTurnOffVaryByDay()
+            setUseDayNames(false)
+            setCycleWeeks(1)
+            setWeekWorkDays({})
+            setScheduleMode('standard')
+          },
+        })
+        return
+      }
+    }
+    setScheduleMode(mode)
+  }
+
   // ── Vary-by-day toggle ────────────────────────────────────────
   const doTurnOffVaryByDay = () => {
     setActiveDayTab(''); setDayRows({}); setDayStartTimes({}); setDayPeriodDurs({}); setVaryByDay(false)
@@ -1344,6 +1375,56 @@ export function StepBell() {
         {/* ══════════ LEFT ══════════ */}
         <div>
 
+          {/* ─── SCHEDULE MODE SELECTOR ─── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {(['standard', 'advanced'] as const).map(mode => {
+                const active = scheduleMode === mode
+                return (
+                  <button key={mode} onClick={() => handleSetMode(mode)} style={{
+                    padding: '14px 16px', borderRadius: 10, textAlign: 'left',
+                    border: active ? '2px solid #7C6FE0' : '1.5px solid #E5E7EB',
+                    background: active ? '#F5F3FF' : '#FAFAFA',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    transition: 'all .15s',
+                  }}>
+                    {/* Header row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      {/* Radio dot */}
+                      <div style={{
+                        width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                        border: active ? '5px solid #7C6FE0' : '2px solid #D1D5DB',
+                        background: '#fff', transition: 'border .15s',
+                      }} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: active ? '#13111E' : '#6B7280' }}>
+                        {mode === 'standard' ? 'Standard' : 'Advanced'}
+                      </span>
+                      {mode === 'advanced' && (
+                        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.04em', color: '#7C3AED', background: '#EDE9FF', padding: '2px 7px', borderRadius: 8, marginLeft: 'auto' }}>HYBRID</span>
+                      )}
+                    </div>
+                    {/* Feature list */}
+                    {mode === 'standard' ? (
+                      <div style={{ fontSize: 11, color: active ? '#374151' : '#9CA3AF', lineHeight: 1.7 }}>
+                        <div>📅 One shift for the whole school</div>
+                        <div>🔁 Same bell every day — weekly or fortnightly</div>
+                        <div>⚡ Quick to set up, easy to understand</div>
+                        <div>☕ Class-wise breaks &amp; day off rules</div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: active ? '#374151' : '#9CA3AF', lineHeight: 1.7 }}>
+                        <div>📆 Different schedule for each day of the week</div>
+                        <div>🔀 Multi-week cycles — Week 1 ≠ Week 2</div>
+                        <div>⏰ Different start time &amp; period length per day</div>
+                        <div>🔤 Named day rotations (Day A / Day B…)</div>
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           {/* ─── SCHEDULE RHYTHM ─── */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
@@ -1363,7 +1444,27 @@ export function StepBell() {
 
             <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB', padding: '16px 18px' }}>
 
-              {/* Row 1: cycle stepper OR day-names note + toggle */}
+              {/* ── Standard mode: simple Weekly / Fortnightly chips ── */}
+              {!isAdvanced && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                  <span style={{ fontSize: 12, color: '#6B7280', flexShrink: 0 }}>Repeats</span>
+                  {[{ v: 1, label: 'Weekly' }, { v: 2, label: 'Fortnightly' }].map(({ v, label }) => (
+                    <button key={v} onClick={() => setCycleWeeks(v)} style={{
+                      padding: '5px 16px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                      border: cycleWeeks === v ? '1.5px solid #7C6FE0' : '1px solid #E5E7EB',
+                      background: cycleWeeks === v ? '#EDE9FF' : '#fff',
+                      color: cycleWeeks === v ? '#7C3AED' : '#9CA3AF',
+                      cursor: 'pointer', fontFamily: 'inherit', transition: 'all .12s',
+                    }}>{label}</button>
+                  ))}
+                  {cycleWeeks === 2 && cycleStartDate && (
+                    <span style={{ fontSize: 11, color: '#16A34A', marginLeft: 4 }}>✓ Week 1 starts {cycleStartHint(cycleStartDate)}</span>
+                  )}
+                </div>
+              )}
+
+              {/* ── Advanced mode: full stepper + day-names toggle ── */}
+              {isAdvanced && (<>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                 {!useDayNames && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1531,6 +1632,7 @@ export function StepBell() {
                   )}
                 </div>
               )}
+              </>)}
             </div>
           </div>
 
@@ -1591,6 +1693,7 @@ export function StepBell() {
                 </div>
               </div>
 
+              {/* ── Working days + Day Off Rules header on same line ── */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, color: '#6B7280', flexShrink: 0 }}>Working days:</span>
                 {ALL_DAYS.map(d => {
@@ -1605,19 +1708,14 @@ export function StepBell() {
                     }}>{d}</button>
                   )
                 })}
-              </div>
-
-              {/* ── Day Off Rules ── */}
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #F3F4F6' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: dayOffRules.length > 0 ? 10 : 6 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Day off rules</span>
-                    {dayOffRules.length > 0 && (
-                      <span style={{ fontSize: 10, fontWeight: 700, background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', borderRadius: 10, padding: '1px 7px' }}>
-                        {dayOffRules.length}
-                      </span>
-                    )}
-                  </div>
+                {/* Day Off Rules inline header — right-aligned */}
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Day off rules</span>
+                  {dayOffRules.length > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', borderRadius: 10, padding: '1px 7px' }}>
+                      {dayOffRules.length}
+                    </span>
+                  )}
                   <button
                     onClick={() => setDayOffRules(prev => [...prev, {
                       id: makeId(),
@@ -1633,6 +1731,10 @@ export function StepBell() {
                     <Plus size={10} /> Add rule
                   </button>
                 </div>
+              </div>
+
+              {/* ── Day Off Rules list ── */}
+              <div style={{ marginTop: dayOffRules.length > 0 ? 10 : 0 }}>
 
                 {dayOffRules.length === 0 ? (
                   <div style={{ fontSize: 11, color: '#D1D5DB', fontStyle: 'italic' }}>
@@ -1712,7 +1814,8 @@ export function StepBell() {
               <SH>BELL TIMING GRID</SH>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 
-                {/* Vary by day toggle */}
+                {/* Vary by day toggle — advanced only */}
+                {isAdvanced && (<>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
                   <div style={{ position: 'relative', width: 30, height: 16, flexShrink: 0 }}>
                     <input type="checkbox" checked={varyByDay}
@@ -1727,6 +1830,7 @@ export function StepBell() {
                 </label>
 
                 <div style={{ width: 1, height: 14, background: '#E5E7EB', flexShrink: 0 }} />
+                </>)}
 
                 <button
                   onClick={handleOpenCwPanel}
