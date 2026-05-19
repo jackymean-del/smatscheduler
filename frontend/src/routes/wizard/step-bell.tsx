@@ -1,18 +1,17 @@
 /**
- * Step 1 — Shift & Bell Timing  (v3 redesign)
+ * Step 1 — Shift & Bell Timing  (v4)
  *
- * Features:
- *  • Editable shift name (replaces "Primary shift" static label)
- *  • Start time + Period duration (shared)  →  end time auto-computed
- *  • Max periods/day  →  auto-generates Period 1…N rows
- *  • Assembly row always first (10 min default, deletable)
- *  • Dispersal row always last  (10 min default, deletable)
- *  • "Add break here" strip between every pair of rows → Short Break / Lunch
- *  • Any row duration or start time change cascades all subsequent times
- *  • Per-row class-group multi-select (All / Pre-Primary / Primary / Middle / Senior)
- *  • Working days: Mon – Sun
- *  • Live bell timeline + AI capacity engine (right panel, sticky)
- *  • Footer: ← Back | Step 1 of 5 | Next: Resources →
+ * Fixes in v4:
+ *  1. Number-input UX — select-all on focus so you can type immediately
+ *  2. End time is now editable; changes adjust the last teaching period's duration
+ *  3. "Add break" strips are always visible (no hover required)
+ *  4. Assembly AND Dispersal are now deletable
+ *  5. AI suggest timings builds a proper schedule:
+ *       Assembly (15 min) → Morning break (10 min) → Periods →
+ *       Lunch (30 min, after period crossing 12 PM) → more periods →
+ *       Afternoon break (10 min) → Dispersal (5 min)
+ *  6. Default remains plain Assembly + N periods + Dispersal
+ *  7. All state persisted to localStorage so closing/back-navigating keeps data
  */
 
 import {
@@ -38,22 +37,20 @@ interface BellRow {
 
 // ── Class groups ──────────────────────────────────────────────
 const CLASS_GROUPS = [
-  { key: 'pre-primary', label: 'Pre-Primary',    short: 'Pre-Pri',  desc: 'Nursery–UKG' },
-  { key: 'primary',     label: 'Primary',         short: 'I–V',      desc: 'Class I–V'   },
-  { key: 'middle',      label: 'Middle',           short: 'VI–X',     desc: 'Class VI–X'  },
-  { key: 'senior',      label: 'Senior',           short: 'XI–XII',   desc: 'Class XI–XII'},
+  { key: 'pre-primary', label: 'Pre-Primary', short: 'Pre-Pri', desc: 'Nursery–UKG' },
+  { key: 'primary',     label: 'Primary',     short: 'I–V',     desc: 'Class I–V'   },
+  { key: 'middle',      label: 'Middle',       short: 'VI–X',    desc: 'Class VI–X'  },
+  { key: 'senior',      label: 'Senior',       short: 'XI–XII',  desc: 'Class XI–XII'},
 ]
 const ALL_CLASS_KEYS = CLASS_GROUPS.map(g => g.key)
 
 // ── Type metadata ─────────────────────────────────────────────
-const TYPE_META: Record<RowType, {
-  label: string; bg: string; fg: string; border: string; line: string
-}> = {
-  assembly:    { label: 'Assembly',    bg: '#EDE9FF', fg: '#7C3AED', border: '#C4B5FD', line: '#7C3AED' },
-  teaching:    { label: 'Teaching',    bg: '#DBEAFE', fg: '#1D4ED8', border: '#BFDBFE', line: '#3B82F6' },
+const TYPE_META: Record<RowType, { label: string; bg: string; fg: string; border: string; line: string }> = {
+  assembly:     { label: 'Assembly',    bg: '#EDE9FF', fg: '#7C3AED', border: '#C4B5FD', line: '#7C3AED' },
+  teaching:     { label: 'Teaching',    bg: '#DBEAFE', fg: '#1D4ED8', border: '#BFDBFE', line: '#3B82F6' },
   'short-break':{ label: 'Short Break', bg: '#F0FDF4', fg: '#15803D', border: '#BBF7D0', line: '#22C55E' },
-  lunch:       { label: 'Lunch',       bg: '#FEF3C7', fg: '#D97706', border: '#FDE68A', line: '#F59E0B' },
-  dispersal:   { label: 'Dispersal',   bg: '#FEE2E2', fg: '#DC2626', border: '#FECACA', line: '#EF4444' },
+  lunch:        { label: 'Lunch',       bg: '#FEF3C7', fg: '#D97706', border: '#FDE68A', line: '#F59E0B' },
+  dispersal:    { label: 'Dispersal',   bg: '#FEE2E2', fg: '#DC2626', border: '#FECACA', line: '#EF4444' },
 }
 
 // ── Working days ──────────────────────────────────────────────
@@ -77,7 +74,6 @@ function fmt12(hhmm: string, use12: boolean): string {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
-// Compute start time for every row from a base start + sequence of durations
 function computeStarts(startTime: string, rows: BellRow[]): string[] {
   const acc: string[] = []
   let cur = startTime
@@ -90,29 +86,45 @@ function computeStarts(startTime: string, rows: BellRow[]): string[] {
 
 function makeId() { return Math.random().toString(36).slice(2, 8) }
 
-// ── Row factory helpers ───────────────────────────────────────
-const mkAssembly  = (): BellRow => ({ id: 'assembly',  name: 'Assembly',    type: 'assembly',  duration: 10, classes: [...ALL_CLASS_KEYS] })
-const mkDispersal = (): BellRow => ({ id: 'dispersal', name: 'Dispersal',   type: 'dispersal', duration: 10, classes: [...ALL_CLASS_KEYS] })
+// ── Row factories ─────────────────────────────────────────────
+const mkAssembly  = (): BellRow => ({ id: 'assembly',  name: 'Assembly',  type: 'assembly',  duration: 15, classes: [...ALL_CLASS_KEYS] })
+const mkDispersal = (): BellRow => ({ id: 'dispersal', name: 'Dispersal', type: 'dispersal', duration: 5,  classes: [...ALL_CLASS_KEYS] })
 const mkPeriod    = (n: number, dur: number): BellRow => ({
   id: `p${n}`, name: `Period ${n}`, type: 'teaching', duration: dur, classes: [...ALL_CLASS_KEYS],
 })
 
 function buildRows(count: number, dur: number): BellRow[] {
-  return [
-    mkAssembly(),
-    ...Array.from({ length: count }, (_, i) => mkPeriod(i + 1, dur)),
-    mkDispersal(),
-  ]
+  return [mkAssembly(), ...Array.from({ length: count }, (_, i) => mkPeriod(i + 1, dur)), mkDispersal()]
+}
+
+// ── Persistence ───────────────────────────────────────────────
+const BELL_KEY = 'schedu-bell-v1'
+
+interface SavedBell {
+  shiftName:  string
+  startTime:  string
+  use12h:     boolean
+  periodDur:  number
+  maxPeriods: number
+  workDays:   string[]
+  rows:       BellRow[]
+}
+
+function loadSaved(): SavedBell | null {
+  try {
+    const s = localStorage.getItem(BELL_KEY)
+    return s ? (JSON.parse(s) as SavedBell) : null
+  } catch { return null }
 }
 
 // ══════════════════════════════════════════════════════════════
-//  ClassPicker — compact multi-select dropdown per row
+//  ClassPicker
 // ══════════════════════════════════════════════════════════════
 function ClassPicker({
   classes, onChange, rowId, openId, setOpenId,
 }: {
   classes: string[]
-  onChange: (classes: string[]) => void
+  onChange: (c: string[]) => void
   rowId: string
   openId: string | null
   setOpenId: (id: string | null) => void
@@ -144,10 +156,8 @@ function ClassPicker({
         style={{
           padding: '3px 9px', borderRadius: 6,
           border: '1px solid #E5E7EB', background: isAll ? '#F0EDFF' : '#F9FAFB',
-          fontSize: 11, fontWeight: 600,
-          color: isAll ? '#7C3AED' : '#374151',
-          cursor: 'pointer', whiteSpace: 'nowrap',
-          fontFamily: 'inherit',
+          fontSize: 11, fontWeight: 600, color: isAll ? '#7C3AED' : '#374151',
+          cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'inherit',
           display: 'flex', alignItems: 'center', gap: 4,
         }}
       >
@@ -164,7 +174,6 @@ function ClassPicker({
           borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
           zIndex: 300, minWidth: 170, padding: '6px 0',
         }}>
-          {/* All */}
           <label style={PICK_ROW}>
             <input type="checkbox" checked={isAll}
               onChange={e => onChange(e.target.checked ? [...ALL_CLASS_KEYS] : [])}
@@ -189,53 +198,48 @@ function ClassPicker({
   )
 }
 
-const PICK_ROW: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8,
-  padding: '6px 12px', cursor: 'pointer',
-}
+const PICK_ROW: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', cursor: 'pointer' }
 
 // ══════════════════════════════════════════════════════════════
-//  GapRow — "Add break here" strip between rows
+//  GapRow — always-visible "Add break here" strip
 // ══════════════════════════════════════════════════════════════
 function GapRow({ afterIndex, onInsert }: {
   afterIndex: number
   onInsert: (i: number, t: 'short-break' | 'lunch') => void
 }) {
-  const [hov, setHov] = useState(false)
   return (
-    <div
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        height: hov ? 30 : 6,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: 8, overflow: 'hidden',
-        transition: 'height 0.15s',
-        background: hov ? '#FAFAFA' : 'transparent',
-        borderTop: hov ? '1px dashed #E5E7EB' : '1px solid transparent',
-        borderBottom: hov ? '1px dashed #E5E7EB' : '1px solid transparent',
-      }}
-    >
-      {hov && (
-        <>
-          <button onClick={() => onInsert(afterIndex, 'short-break')} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '3px 10px', borderRadius: 20,
-            border: '1px dashed #22C55E', background: '#F0FDF4',
-            color: '#15803D', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
-          }}>
-            <Coffee size={10} /> Short break
-          </button>
-          <button onClick={() => onInsert(afterIndex, 'lunch')} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '3px 10px', borderRadius: 20,
-            border: '1px dashed #F59E0B', background: '#FFFBEB',
-            color: '#D97706', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
-          }}>
-            <UtensilsCrossed size={10} /> Lunch break
-          </button>
-        </>
-      )}
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: 6, height: 24,
+      background: '#FAFAFA',
+      borderTop: '1px dashed #EBEBEB',
+      borderBottom: '1px dashed #EBEBEB',
+    }}>
+      <button
+        onClick={() => onInsert(afterIndex, 'short-break')}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          padding: '2px 9px', borderRadius: 12,
+          border: '1px solid #BBF7D0', background: 'transparent',
+          color: '#15803D', fontSize: 10, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <Coffee size={8} /> + Short break
+      </button>
+      <span style={{ width: 1, height: 12, background: '#E5E7EB', flexShrink: 0 }} />
+      <button
+        onClick={() => onInsert(afterIndex, 'lunch')}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          padding: '2px 9px', borderRadius: 12,
+          border: '1px solid #FDE68A', background: 'transparent',
+          color: '#D97706', fontSize: 10, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <UtensilsCrossed size={8} /> + Lunch
+      </button>
     </div>
   )
 }
@@ -246,30 +250,80 @@ function GapRow({ afterIndex, onInsert }: {
 export function StepBell() {
   const { config, setConfig, setStep, setBreaks } = useTimetableStore()
 
-  // ── State ────────────────────────────────────────────────
-  const [shiftName,   setShiftName]   = useState('Primary shift')
-  const [startTime,   setStartTime]   = useState(config.startTime ?? '09:00')
-  const [use12h,      setUse12h]      = useState(true)
-  const [periodDur,   setPeriodDur]   = useState(config.defaultSessionDuration ?? 40)
-  const [maxPeriods,  setMaxPeriods]  = useState(config.periodsPerDay ?? 8)
-  const [workDays,    setWorkDays]    = useState<string[]>(
-    config.workDays?.length
+  // ── Restore from localStorage (then fall back to store config) ──
+  const [_saved] = useState<SavedBell | null>(loadSaved)
+
+  const [shiftName,  setShiftName]  = useState<string>(  () => _saved?.shiftName ?? 'Main Shift')
+  const [startTime,  setStartTime]  = useState<string>(  () => _saved?.startTime ?? (config.startTime ?? '09:00'))
+  const [use12h,     setUse12h]     = useState<boolean>( () => _saved?.use12h ?? true)
+  const [periodDur,  setPeriodDur]  = useState<number>(  () => _saved?.periodDur ?? (config.defaultSessionDuration ?? 40))
+  const [maxPeriods, setMaxPeriods] = useState<number>(  () => _saved?.maxPeriods ?? (config.periodsPerDay ?? 8))
+  const [workDays,   setWorkDays]   = useState<string[]>(() => {
+    if (_saved?.workDays?.length) return _saved.workDays
+    return config.workDays?.length
       ? config.workDays.map(d => d.charAt(0) + d.slice(1, 3).toLowerCase())
-      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-  )
-  const [rows,        setRows]        = useState<BellRow[]>(() => buildRows(maxPeriods, periodDur))
-  const [openPicker,  setOpenPicker]  = useState<string | null>(null)
+      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  })
+  const [rows,       setRows]       = useState<BellRow[]>(() => {
+    if (_saved?.rows?.length) return _saved.rows
+    const dur = _saved?.periodDur ?? (config.defaultSessionDuration ?? 40)
+    const cnt = _saved?.maxPeriods ?? (config.periodsPerDay ?? 8)
+    return buildRows(cnt, dur)
+  })
+  const [openPicker, setOpenPicker] = useState<string | null>(null)
 
-  // Close picker when clicking outside (handled inside ClassPicker)
+  // ── Auto-save all state to localStorage ──────────────────────
+  useEffect(() => {
+    localStorage.setItem(BELL_KEY, JSON.stringify({
+      shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
+    } satisfies SavedBell))
+  }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows])
 
-  // ── When period duration changes → update all teaching rows ─
+  // ── Computed: start times cascade ────────────────────────────
+  const startTimes = useMemo(() => computeStarts(startTime, rows), [startTime, rows])
+
+  const endTime = rows.length > 0
+    ? addMins(startTimes[rows.length - 1], rows[rows.length - 1].duration)
+    : startTime
+
+  // ── Handlers ─────────────────────────────────────────────────
+
+  /** End time edit: adjusts last teaching row's duration to hit the target time. */
+  const handleEndTimeEdit = (val: string) => {
+    if (!val || !/^\d{2}:\d{2}$/.test(val)) return
+    const [sh, sm] = startTime.split(':').map(Number)
+    const [eh, em] = val.split(':').map(Number)
+    const target = (eh * 60 + em) - (sh * 60 + sm)
+    if (target <= 0) return
+    const current = rows.reduce((s, r) => s + r.duration, 0)
+    const diff = target - current
+    if (diff === 0) return
+    setRows(prev => {
+      const next = [...prev]
+      // Find last teaching row to absorb the diff
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].type === 'teaching') {
+          next[i] = { ...next[i], duration: Math.max(5, next[i].duration + diff) }
+          return next
+        }
+      }
+      // Fallback: adjust last row
+      if (next.length > 0) {
+        next[next.length - 1] = {
+          ...next[next.length - 1],
+          duration: Math.max(5, next[next.length - 1].duration + diff),
+        }
+      }
+      return next
+    })
+  }
+
   const handlePeriodDurChange = (d: number) => {
     const v = Math.max(10, d)
     setPeriodDur(v)
     setRows(prev => prev.map(r => r.type === 'teaching' ? { ...r, duration: v } : r))
   }
 
-  // ── When max periods changes → rebuild teaching period rows ─
   const handleMaxPeriodsChange = (n: number) => {
     const v = Math.max(1, Math.min(16, n))
     setMaxPeriods(v)
@@ -281,36 +335,19 @@ export function StepBell() {
         const existing = prev.find(r => r.id === `p${i + 1}`)
         return existing ? { ...existing, duration: periodDur } : mkPeriod(i + 1, periodDur)
       })
-      // Re-insert existing breaks at roughly the same relative positions
-      const result: BellRow[] = [assembly, ...newPeriods]
-      // Add back any breaks that fit (insert before dispersal)
-      for (const b of breaks) result.push(b)
-      result.push(dispersal)
+      const result: BellRow[] = [assembly, ...newPeriods, ...breaks, dispersal]
       return result
     })
   }
 
-  // ── Computed: start times cascade from startTime + durations ─
-  const startTimes = useMemo(() => computeStarts(startTime, rows), [startTime, rows])
-
-  // End time = start of [last row] + last row duration
-  const endTime = rows.length > 0
-    ? addMins(startTimes[rows.length - 1], rows[rows.length - 1].duration)
-    : startTime
-
-  // ── Helpers ───────────────────────────────────────────────
   const toggleDay = (d: string) =>
     setWorkDays(w => w.includes(d) ? w.filter(x => x !== d) : [...w, d])
 
   const updateRow = (id: string, patch: Partial<BellRow>) =>
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
 
-  const deleteRow = (id: string) =>
-    setRows(prev => {
-      const r = prev.find(x => x.id === id)
-      if (!r || r.type === 'assembly' || r.type === 'dispersal') return prev
-      return prev.filter(x => x.id !== id)
-    })
+  /** All rows are deletable (including Assembly and Dispersal). */
+  const deleteRow = (id: string) => setRows(prev => prev.filter(x => x.id !== id))
 
   const insertBreak = (afterIndex: number, type: 'short-break' | 'lunch') => {
     const newRow: BellRow = {
@@ -327,18 +364,61 @@ export function StepBell() {
     })
   }
 
-  // ── Capacity ──────────────────────────────────────────────
+  /** AI suggest: Assembly → Morning break → Periods → Lunch (after noon-crossing period)
+   *  → more periods → Afternoon break → Dispersal */
+  const handleAISuggest = () => {
+    const [sh, sm] = startTime.split(':').map(Number)
+    let curMins = sh * 60 + sm
+    const result: BellRow[] = []
+
+    // Assembly (15 min)
+    result.push({ id: 'assembly', name: 'Assembly', type: 'assembly', duration: 15, classes: [...ALL_CLASS_KEYS] })
+    curMins += 15
+
+    // Short break right after assembly (10 min)
+    result.push({ id: makeId(), name: 'Morning Break', type: 'short-break', duration: 10, classes: [...ALL_CLASS_KEYS] })
+    curMins += 10
+
+    let lunchAdded = false
+    for (let i = 0; i < maxPeriods; i++) {
+      result.push(mkPeriod(i + 1, periodDur))
+      curMins += periodDur
+
+      // Lunch after the period that crosses 12:00 PM (noon = 720 min)
+      if (!lunchAdded && curMins >= 720) {
+        result.push({ id: makeId(), name: 'Lunch Break', type: 'lunch', duration: 30, classes: [...ALL_CLASS_KEYS] })
+        curMins += 30
+        lunchAdded = true
+      }
+    }
+
+    // If no period crossed noon (all periods finish before 12), insert lunch after middle period
+    if (!lunchAdded && maxPeriods > 0) {
+      // assembly + morning-break are at indices 0 and 1; teaching periods start at 2
+      const insertAt = 2 + Math.ceil(maxPeriods / 2)
+      result.splice(insertAt, 0, { id: makeId(), name: 'Lunch Break', type: 'lunch', duration: 30, classes: [...ALL_CLASS_KEYS] })
+    }
+
+    // Afternoon break (10 min) right before dispersal
+    result.push({ id: makeId(), name: 'Afternoon Break', type: 'short-break', duration: 10, classes: [...ALL_CLASS_KEYS] })
+
+    // Dispersal (5 min)
+    result.push({ id: 'dispersal', name: 'Dispersal', type: 'dispersal', duration: 5, classes: [...ALL_CLASS_KEYS] })
+
+    setRows(result)
+  }
+
+  // ── Capacity (weekly teaching slots per group) ────────────────
   const capacity = useMemo(() => {
     const tRows = rows.filter(r => r.type === 'teaching')
     const d = workDays.length
     return CLASS_GROUPS.map(g => ({
-      label: g.label,
-      desc: g.desc,
+      label: g.label, desc: g.desc,
       count: tRows.filter(r => r.classes.includes(g.key)).length * d,
     }))
   }, [rows, workDays.length])
 
-  // ── Save & navigate ───────────────────────────────────────
+  // ── Save to store + navigate ──────────────────────────────────
   const handleNext = () => {
     setConfig({
       workDays: workDays.map(d => DAY_TO_FULL[d] ?? d.toUpperCase()),
@@ -346,18 +426,14 @@ export function StepBell() {
       periodsPerDay: maxPeriods,
       defaultSessionDuration: periodDur,
     } as any)
-    setBreaks(
-      rows.filter(r => r.type !== 'teaching').map(r => ({
-        id: r.id, name: r.name,
-        duration: r.duration,
-        type: r.type as any,
-        shiftable: r.type === 'short-break',
-      })),
-    )
+    setBreaks(rows.filter(r => r.type !== 'teaching').map(r => ({
+      id: r.id, name: r.name, duration: r.duration,
+      type: r.type as any, shiftable: r.type === 'short-break',
+    })))
     setStep(2)
   }
 
-  // ─────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────
   return (
     <div style={{
       padding: '20px 28px 32px',
@@ -397,6 +473,8 @@ export function StepBell() {
         .b-nav-sec:hover { background: #F3F4F6 !important; }
         .b-nav-pri { transition: background .13s; }
         .b-nav-pri:hover { background: #1a1730 !important; }
+        .gap-btn { transition: background .12s, border-color .12s; }
+        .gap-btn:hover { background: rgba(0,0,0,0.03) !important; }
       `}</style>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 290px', gap: 20, alignItems: 'start' }}>
@@ -414,7 +492,7 @@ export function StepBell() {
                 className="b-input"
                 value={shiftName}
                 onChange={e => setShiftName(e.target.value)}
-                placeholder="e.g. Primary shift"
+                placeholder="e.g. Main Shift"
                 style={{ fontWeight: 700, fontSize: 14, width: '100%', marginBottom: 16 }}
               />
 
@@ -430,17 +508,17 @@ export function StepBell() {
                   <div style={FH}>{fmt12(startTime, use12h)}</div>
                 </div>
 
-                {/* End time — auto-computed */}
+                {/* End time — now editable; adjusts last teaching period */}
                 <div>
                   <div style={FL}>End time</div>
-                  <div style={{
-                    padding: '8px 10px', borderRadius: 7, border: '1px solid #E5E7EB',
-                    background: '#F9FAFB', fontSize: 13, color: '#6B7280',
-                    fontFamily: "'DM Mono', monospace", fontWeight: 600,
-                  }}>
-                    {fmt12(endTime, use12h)}
-                  </div>
-                  <div style={FH}>auto-computed</div>
+                  <input
+                    className="b-input"
+                    type="time"
+                    value={endTime}
+                    onChange={e => handleEndTimeEdit(e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                  <div style={FH}>{fmt12(endTime, use12h)} · adjusts last period</div>
                 </div>
 
                 {/* Period duration */}
@@ -448,6 +526,7 @@ export function StepBell() {
                   <div style={FL}>Period (min)</div>
                   <input className="b-input" type="number" min={10} max={120}
                     value={periodDur}
+                    onFocus={e => e.currentTarget.select()}
                     onChange={e => handlePeriodDurChange(+e.target.value)}
                     style={{ width: '100%', textAlign: 'center', fontFamily: "'DM Mono',monospace", fontWeight: 800, fontSize: 16 }} />
                 </div>
@@ -457,6 +536,7 @@ export function StepBell() {
                   <div style={FL}>Max periods/day</div>
                   <input className="b-input" type="number" min={1} max={16}
                     value={maxPeriods}
+                    onFocus={e => e.currentTarget.select()}
                     onChange={e => handleMaxPeriodsChange(+e.target.value)}
                     style={{ width: '100%', textAlign: 'center', fontFamily: "'DM Mono',monospace", fontWeight: 800, fontSize: 16 }} />
                 </div>
@@ -515,9 +595,8 @@ export function StepBell() {
               <div>
                 {rows.map((row, i) => {
                   const tm    = TYPE_META[row.type]
-                  const start = startTimes[i]  ?? '—'
+                  const start = startTimes[i] ?? '—'
                   const end   = addMins(start, row.duration)
-                  const isDel = row.type !== 'assembly' && row.type !== 'dispersal'
 
                   return (
                     <div key={row.id}>
@@ -527,45 +606,34 @@ export function StepBell() {
                         gridTemplateColumns: '88px 80px 80px 60px 100px 1fr 28px',
                         padding: '6px 14px',
                         alignItems: 'center',
-                        background: row.type === 'assembly' || row.type === 'dispersal'
+                        background: (row.type === 'assembly' || row.type === 'dispersal')
                           ? '#FAFAFA' : '#fff',
                       }}>
                         {/* Bell name */}
                         <input className="b-cell" value={row.name}
                           onChange={e => updateRow(row.id, { name: e.target.value })} />
 
-                        {/* Start (computed, read-only) */}
-                        <div style={{
-                          fontSize: 12, fontFamily: "'DM Mono',monospace",
-                          color: '#374151', fontWeight: 600,
-                          padding: '4px 7px',
-                        }}>
-                          {fmt12(start, use12h).replace(' AM', '').replace(' PM', '')}
+                        {/* Start (computed) */}
+                        <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: '#374151', fontWeight: 600, padding: '4px 7px' }}>
+                          {fmt12(start, use12h).replace(/ [AP]M$/, '')}
                         </div>
 
-                        {/* End (computed, read-only) */}
-                        <div style={{
-                          fontSize: 12, fontFamily: "'DM Mono',monospace",
-                          color: '#374151', fontWeight: 600,
-                          padding: '4px 7px',
-                        }}>
-                          {fmt12(end, use12h).replace(' AM', '').replace(' PM', '')}
+                        {/* End (computed) */}
+                        <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: '#374151', fontWeight: 600, padding: '4px 7px' }}>
+                          {fmt12(end, use12h).replace(/ [AP]M$/, '')}
                         </div>
 
-                        {/* Duration (editable) */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <input className="b-dur" type="number" min={5} max={240}
-                            value={row.duration}
-                            onChange={e => updateRow(row.id, { duration: Math.max(5, +e.target.value) })} />
-                        </div>
+                        {/* Duration (editable) — select-all on focus */}
+                        <input className="b-dur" type="number" min={5} max={240}
+                          value={row.duration}
+                          onFocus={e => e.currentTarget.select()}
+                          onChange={e => updateRow(row.id, { duration: Math.max(5, +e.target.value) })} />
 
                         {/* Type badge */}
                         <div style={{
                           padding: '3px 10px', borderRadius: 20, display: 'inline-block',
-                          background: tm.bg, color: tm.fg,
-                          border: `1px solid ${tm.border}`,
-                          fontSize: 11, fontWeight: 600,
-                          whiteSpace: 'nowrap',
+                          background: tm.bg, color: tm.fg, border: `1px solid ${tm.border}`,
+                          fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
                         }}>
                           {tm.label}
                         </div>
@@ -579,12 +647,11 @@ export function StepBell() {
                           setOpenId={setOpenPicker}
                         />
 
-                        {/* Delete */}
+                        {/* Delete — all rows deletable */}
                         <button className="b-del" onClick={() => deleteRow(row.id)} style={{
-                          background: 'none', border: 'none', cursor: isDel ? 'pointer' : 'default',
-                          color: isDel ? '#FCA5A5' : '#E5E7EB',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          padding: 3, opacity: isDel ? 0 : 0.3,
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: '#FCA5A5', display: 'flex', alignItems: 'center',
+                          justifyContent: 'center', padding: 3, opacity: 0,
                         }}>
                           <Trash2 size={13} />
                         </button>
@@ -605,7 +672,7 @@ export function StepBell() {
                 borderTop: '1px solid #F3F4F6',
                 borderRadius: '0 0 10px 10px',
               }}>
-                <button onClick={() => setRows(buildRows(maxPeriods, periodDur))} style={{
+                <button onClick={handleAISuggest} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '6px 14px', borderRadius: 7,
                   border: '1px solid #C4B5FD', background: '#F5F3FF',
@@ -616,12 +683,11 @@ export function StepBell() {
                 </button>
                 <button onClick={() => {
                   const lastP = rows.filter(r => r.type === 'teaching').length
-                  const dispersalIdx = rows.findIndex(r => r.type === 'dispersal')
                   const newRow: BellRow = mkPeriod(lastP + 1, periodDur)
                   setRows(prev => {
                     const next = [...prev]
                     const di = next.findIndex(r => r.type === 'dispersal')
-                    next.splice(Math.max(0, di), 0, newRow)
+                    next.splice(di >= 0 ? di : next.length, 0, newRow)
                     return next
                   })
                 }} style={{
@@ -632,6 +698,15 @@ export function StepBell() {
                   cursor: 'pointer', fontFamily: 'inherit',
                 }}>
                   <Plus size={12} /> Add period
+                </button>
+                <button onClick={() => setRows(buildRows(maxPeriods, periodDur))} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '6px 14px', borderRadius: 7,
+                  border: '1px solid #E5E7EB', background: '#fff',
+                  fontSize: 12, fontWeight: 600, color: '#6B7280',
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}>
+                  Reset to default
                 </button>
               </div>
             </div>
@@ -659,22 +734,13 @@ export function StepBell() {
                   padding: '8px 12px',
                   borderLeft: `3px solid ${tm.line}`,
                   borderBottom: i < rows.length - 1 ? '1px solid #F9FAFB' : 'none',
-                  background: '#fff',
                 }}>
-                  <div style={{
-                    fontSize: 11, fontWeight: 700, color: '#374151',
-                    fontFamily: "'DM Mono',monospace",
-                    minWidth: 40, flexShrink: 0,
-                  }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', fontFamily: "'DM Mono',monospace", minWidth: 44, flexShrink: 0 }}>
                     {fmt12(start, use12h).replace(/ (AM|PM)$/, '')}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#13111E' }}>
-                      {row.name}
-                    </div>
-                    <div style={{ fontSize: 10, color: '#9CA3AF' }}>
-                      {row.duration} min · {grp}
-                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#13111E' }}>{row.name}</div>
+                    <div style={{ fontSize: 10, color: '#9CA3AF' }}>{row.duration} min · {grp}</div>
                   </div>
                 </div>
               )
@@ -682,29 +748,19 @@ export function StepBell() {
           </div>
 
           {/* ─── AI CAPACITY ENGINE ─── */}
-          <div style={{
-            background: '#FAF7F0', borderRadius: 10,
-            border: '1px solid #E8E0CC', padding: '14px 16px',
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 12,
-            }}>
+          <div style={{ background: '#FAF7F0', borderRadius: 10, border: '1px solid #E8E0CC', padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 12 }}>
               <Sparkles size={13} color="#D97706" />
               AI capacity engine
             </div>
             {capacity.map(c => (
-              <div key={c.label} style={{
-                display: 'flex', justifyContent: 'space-between',
-                alignItems: 'center', marginBottom: 8,
-              }}>
+              <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <div>
                   <div style={{ fontSize: 12, color: '#374151' }}>{c.label}</div>
                   <div style={{ fontSize: 10, color: '#9CA3AF' }}>{c.desc}</div>
                 </div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#13111E' }}>
-                  {c.count}
-                  <span style={{ fontSize: 11, fontWeight: 400, color: '#9CA3AF' }}> /wk</span>
+                  {c.count}<span style={{ fontSize: 11, fontWeight: 400, color: '#9CA3AF' }}> /wk</span>
                 </span>
               </div>
             ))}
@@ -752,7 +808,7 @@ export function StepBell() {
   )
 }
 
-// ── Helpers ───────────────────────────────────────────────────
+// ── Shared style helpers ──────────────────────────────────────
 function SH({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
