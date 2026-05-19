@@ -1,18 +1,20 @@
 /**
- * Step 1 — Shift & Bell Timing  (v4)
+ * Step 1 — Shift & Bell Timing  (v5)
  *
- * Fixes in v4:
- *  1. Number-input UX — local-string wrapper (NumInput) commits only on blur/Enter;
- *     never fights React controlled re-renders mid-type
- *  2. End time is now editable; changes adjust the last teaching period's duration
- *  3. "Add break" strips are always visible (no hover required)
- *  4. Assembly AND Dispersal are now deletable
- *  5. AI suggest timings builds a proper schedule:
- *       Assembly (15 min) → Morning break (10 min) → Periods →
- *       Lunch (30 min, after period crossing 12 PM) → more periods →
- *       Afternoon break (10 min) → Dispersal (5 min)
- *  6. Default remains plain Assembly + N periods + Dispersal
- *  7. All state persisted to localStorage so closing/back-navigating keeps data
+ * Changes in v5:
+ *  1. End time now always shown in the selected format (12H/24H) — replaced
+ *     <input type="time"> with a formatted display + inline edit toggle so the
+ *     browser locale can never force 24H output.
+ *  2. GapRow redesigned: only "+ Period" and "+ Break" (custom name).
+ *     Type is auto-detected from the name (contains "lunch" → lunch style).
+ *  3. Class-wise bell split:
+ *     — When a break has partial class selection a "✦ Split periods" button appears
+ *       in the gap row below it.
+ *     — Clicking it inserts TWO teaching rows:
+ *         • Period A  — classes NOT in the break (they have class during break time)
+ *         • Period B  — classes IN the break (they start class after break ends)
+ *     — The Live Bell Timeline grows per-group tabs so each class group sees its
+ *       own correct start times (computed by skipping rows that don't include it).
  */
 
 import {
@@ -22,7 +24,7 @@ import {
 import { useTimetableStore } from '@/store/timetableStore'
 import {
   Plus, Sparkles, ChevronLeft, ChevronRight,
-  Trash2, Coffee, UtensilsCrossed,
+  Trash2, Coffee, X,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────
@@ -33,7 +35,7 @@ interface BellRow {
   name:     string
   type:     RowType
   duration: number     // minutes
-  classes:  string[]   // class-group keys
+  classes:  string[]   // class-section keys
 }
 
 // ── Individual class-sections ─────────────────────────────────
@@ -55,17 +57,16 @@ const CLASSES = [
   { key: 'xii',  label: 'Class XII',  short: 'XII',   group: 'Senior' },
 ]
 
-// Group metadata for headers, capacity panel, etc.
 const CLASS_GROUPS = [
-  { group: 'Pre-Primary', desc: 'Nursery–UKG',    color: '#7C3AED', bg: '#F5F3FF' },
-  { group: 'Primary',     desc: 'Class I–V',       color: '#1D4ED8', bg: '#EFF6FF' },
-  { group: 'Middle',      desc: 'Class VI–X',      color: '#059669', bg: '#F0FDF4' },
-  { group: 'Senior',      desc: 'Class XI–XII',    color: '#D97706', bg: '#FFFBEB' },
+  { group: 'Pre-Primary', desc: 'Nursery–UKG',  color: '#7C3AED', bg: '#F5F3FF' },
+  { group: 'Primary',     desc: 'Class I–V',     color: '#1D4ED8', bg: '#EFF6FF' },
+  { group: 'Middle',      desc: 'Class VI–X',    color: '#059669', bg: '#F0FDF4' },
+  { group: 'Senior',      desc: 'Class XI–XII',  color: '#D97706', bg: '#FFFBEB' },
 ]
 
 const ALL_CLASS_KEYS = CLASSES.map(c => c.key)
 
-// ── Type metadata — badge colours ────────────────────────────
+// ── Type metadata ──────────────────────────────────────────────
 const TYPE_META: Record<RowType, { label: string; bg: string; fg: string; border: string; line: string }> = {
   assembly:     { label: 'Assembly',    bg: '#EDE9FF', fg: '#7C3AED', border: '#C4B5FD', line: '#7C3AED' },
   teaching:     { label: 'Teaching',    bg: '#DBEAFE', fg: '#1D4ED8', border: '#BFDBFE', line: '#3B82F6' },
@@ -74,13 +75,12 @@ const TYPE_META: Record<RowType, { label: string; bg: string; fg: string; border
   dispersal:    { label: 'Dispersal',   bg: '#FEE2E2', fg: '#DC2626', border: '#FECACA', line: '#EF4444' },
 }
 
-// ── Row background (table rows) ───────────────────────────────
 const ROW_BG: Record<RowType, string> = {
-  assembly:     '#F5F3FF',   // soft violet
-  teaching:     '#ffffff',   // plain white
-  'short-break':'#F0FDF4',   // soft green
-  lunch:        '#FFFBEB',   // soft amber
-  dispersal:    '#FFF1F2',   // soft rose
+  assembly:     '#F5F3FF',
+  teaching:     '#ffffff',
+  'short-break':'#F0FDF4',
+  lunch:        '#FFFBEB',
+  dispersal:    '#FFF1F2',
 }
 
 // ── Working days ──────────────────────────────────────────────
@@ -104,6 +104,7 @@ function fmt12(hhmm: string, use12: boolean): string {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
+/** Master start-time cascade (every row advances the clock). */
 function computeStarts(startTime: string, rows: BellRow[]): string[] {
   const acc: string[] = []
   let cur = startTime
@@ -114,11 +115,28 @@ function computeStarts(startTime: string, rows: BellRow[]): string[] {
   return acc
 }
 
+/**
+ * Filtered start-time cascade for a single class key.
+ * The clock only advances for rows that include this class.
+ * Rows that don't include it are still indexed (for slicing) but
+ * contribute zero duration to this class's timeline.
+ *
+ * Used to compute correct per-group bell timings when breaks are
+ * class-specific (e.g. lunch only for Nur–UKG, not for I–XII).
+ */
+function computeStartsFiltered(startTime: string, rows: BellRow[], classKey: string): string[] {
+  const acc: string[] = []
+  let cur = startTime
+  for (const r of rows) {
+    acc.push(cur)
+    if (r.classes.includes(classKey)) cur = addMins(cur, r.duration)
+  }
+  return acc
+}
+
 function makeId() { return Math.random().toString(36).slice(2, 8) }
 
-// ── NumInput — smooth number input that commits only on blur/Enter ─────────
-// Uses local string state so React never overwrites mid-type. Syncs back
-// to external value only when the field is NOT focused (e.g. after a Reset).
+// ── NumInput ──────────────────────────────────────────────────
 interface NumInputProps {
   value:     number
   onChange:  (n: number) => void
@@ -128,10 +146,9 @@ interface NumInputProps {
   style?:    CSSProperties
 }
 function NumInput({ value, onChange, min, max, className, style }: NumInputProps) {
-  const [local,   setLocal]   = useState(String(value))
-  const focused                = useRef(false)
+  const [local, setLocal] = useState(String(value))
+  const focused            = useRef(false)
 
-  // Sync external → local only when not focused (e.g. "Reset to default")
   useEffect(() => {
     if (!focused.current) setLocal(String(value))
   }, [value])
@@ -155,7 +172,7 @@ function NumInput({ value, onChange, min, max, className, style }: NumInputProps
       onChange={e => setLocal(e.target.value.replace(/[^0-9]/g, ''))}
       onFocus={e => { focused.current = true; e.currentTarget.select() }}
       onBlur={commit}
-      onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur() } }}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
     />
   )
 }
@@ -192,15 +209,15 @@ function loadSaved(): SavedBell | null {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  ClassPicker — individual class-section multi-select
+//  ClassPicker
 // ══════════════════════════════════════════════════════════════
 function ClassPicker({
   classes, onChange, rowId, openId, setOpenId,
 }: {
-  classes: string[]
-  onChange: (c: string[]) => void
-  rowId: string
-  openId: string | null
+  classes:   string[]
+  onChange:  (c: string[]) => void
+  rowId:     string
+  openId:    string | null
   setOpenId: (id: string | null) => void
 }) {
   const isOpen = openId === rowId
@@ -218,7 +235,6 @@ function ClassPicker({
   const isAll  = ALL_CLASS_KEYS.every(k => classes.includes(k))
   const isNone = classes.length === 0
 
-  // Chip label: "All" | "—" | "I, II, VI" (≤3) | "5 classes" (>3)
   const label = isAll ? 'All' : isNone ? '—'
     : classes.length <= 3
       ? classes.map(k => CLASSES.find(c => c.key === k)?.short ?? k).join(', ')
@@ -228,18 +244,12 @@ function ClassPicker({
     onChange(checked ? [...classes, key] : classes.filter(c => c !== key))
 
   const toggleGroup = (group: string, checked: boolean) => {
-    const groupKeys = CLASSES.filter(c => c.group === group).map(c => c.key)
-    if (checked) {
-      const merged = [...new Set([...classes, ...groupKeys])]
-      onChange(merged)
-    } else {
-      onChange(classes.filter(k => !groupKeys.includes(k)))
-    }
+    const gk = CLASSES.filter(c => c.group === group).map(c => c.key)
+    onChange(checked ? [...new Set([...classes, ...gk])] : classes.filter(k => !gk.includes(k)))
   }
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
-      {/* Chip button */}
       <button
         onClick={() => setOpenId(isOpen ? null : rowId)}
         style={{
@@ -268,7 +278,6 @@ function ClassPicker({
           maxHeight: 340, overflowY: 'auto',
           padding: '6px 0',
         }}>
-          {/* All classes */}
           <label style={PICK_ROW}>
             <input type="checkbox"
               checked={isAll}
@@ -278,26 +287,20 @@ function ClassPicker({
             <span style={{ fontSize: 12, fontWeight: 700, color: '#13111E' }}>All classes</span>
           </label>
 
-          {/* Groups + individual classes */}
           {CLASS_GROUPS.map(gm => {
-            const groupClasses   = CLASSES.filter(c => c.group === gm.group)
-            const groupKeys      = groupClasses.map(c => c.key)
-            const allInGroup     = groupKeys.every(k => classes.includes(k))
-            const someInGroup    = groupKeys.some(k => classes.includes(k))
+            const gc    = CLASSES.filter(c => c.group === gm.group)
+            const gk    = gc.map(c => c.key)
+            const allIn = gk.every(k => classes.includes(k))
+            const anyIn = gk.some(k => classes.includes(k))
             return (
               <div key={gm.group}>
-                {/* Group header row */}
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '5px 12px 3px',
-                  marginTop: 4,
-                  borderTop: '1px solid #F3F4F6',
-                  background: gm.bg,
+                  padding: '5px 12px 3px', marginTop: 4,
+                  borderTop: '1px solid #F3F4F6', background: gm.bg,
                 }}>
-                  <input
-                    type="checkbox"
-                    checked={allInGroup}
-                    ref={el => { if (el) el.indeterminate = !allInGroup && someInGroup }}
+                  <input type="checkbox" checked={allIn}
+                    ref={el => { if (el) el.indeterminate = !allIn && anyIn }}
                     onChange={e => toggleGroup(gm.group, e.target.checked)}
                     style={{ accentColor: gm.color, flexShrink: 0 }}
                   />
@@ -306,15 +309,11 @@ function ClassPicker({
                   </span>
                   <span style={{ fontSize: 10, color: '#9CA3AF', marginLeft: 'auto' }}>{gm.desc}</span>
                 </div>
-                {/* Individual class rows */}
-                {groupClasses.map(cls => (
+                {gc.map(cls => (
                   <label key={cls.key} style={{ ...PICK_ROW, paddingLeft: 28 }}>
-                    <input
-                      type="checkbox"
-                      checked={classes.includes(cls.key)}
+                    <input type="checkbox" checked={classes.includes(cls.key)}
                       onChange={e => toggleOne(cls.key, e.target.checked)}
-                      style={{ accentColor: gm.color, flexShrink: 0 }}
-                    />
+                      style={{ accentColor: gm.color, flexShrink: 0 }} />
                     <span style={{ fontSize: 12, color: '#374151' }}>{cls.label}</span>
                   </label>
                 ))}
@@ -330,35 +329,111 @@ function ClassPicker({
 const PICK_ROW: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', cursor: 'pointer' }
 
 // ══════════════════════════════════════════════════════════════
-//  GapRow — always-visible "Add break here" strip
+//  GapRow — always-visible strip between bell rows
+//
+//  Shows: [+ Period]  [+ Break]  (and [✦ Split periods] when the
+//  preceding row is a break with partial class selection)
 // ══════════════════════════════════════════════════════════════
-function GapRow({ afterIndex, onInsert }: {
-  afterIndex: number
-  onInsert: (i: number, t: 'short-break' | 'lunch') => void
+function GapRow({
+  afterIndex, rows, onInsertBreak, onInsertPeriod, onInsertSplit,
+}: {
+  afterIndex:     number
+  rows:           BellRow[]
+  onInsertBreak:  (afterIndex: number, name: string) => void
+  onInsertPeriod: (afterIndex: number) => void
+  onInsertSplit:  (afterIndex: number) => void
 }) {
+  const [mode,      setMode]      = useState<'idle' | 'break'>('idle')
+  const [breakName, setBreakName] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const aboveRow       = rows[afterIndex]
+  const isPartialBreak = aboveRow
+    && (aboveRow.type === 'short-break' || aboveRow.type === 'lunch')
+    && aboveRow.classes.length > 0
+    && aboveRow.classes.length < ALL_CLASS_KEYS.length
+
+  useEffect(() => {
+    if (mode === 'break') inputRef.current?.focus()
+  }, [mode])
+
+  const confirmBreak = () => {
+    onInsertBreak(afterIndex, breakName.trim() || 'Break')
+    setMode('idle')
+    setBreakName('')
+  }
+
+  /* ── Break name entry ── */
+  if (mode === 'break') {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '0 10px', height: 30,
+        background: '#FFFBEB',
+        borderTop: '1px dashed #FDE68A', borderBottom: '1px dashed #FDE68A',
+      }}>
+        <span style={{ fontSize: 10, color: '#D97706', fontWeight: 600, flexShrink: 0 }}>Break name:</span>
+        <input
+          ref={inputRef}
+          value={breakName}
+          onChange={e => setBreakName(e.target.value)}
+          placeholder="e.g. Morning Break, Lunch…"
+          onKeyDown={e => {
+            if (e.key === 'Enter') confirmBreak()
+            if (e.key === 'Escape') { setMode('idle'); setBreakName('') }
+          }}
+          style={{
+            flex: 1, padding: '2px 8px', borderRadius: 5,
+            border: '1px solid #FDE68A', fontSize: 11,
+            fontFamily: 'inherit', outline: 'none', background: '#fff',
+          }}
+        />
+        <button onClick={confirmBreak} style={{
+          padding: '2px 10px', borderRadius: 5, border: 'none',
+          background: '#D97706', color: '#fff',
+          fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+        }}>
+          Add
+        </button>
+        <button
+          onClick={() => { setMode('idle'); setBreakName('') }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 2, display: 'flex' }}
+        >
+          <X size={10} />
+        </button>
+      </div>
+    )
+  }
+
+  /* ── Default strip ── */
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      gap: 6, height: 24,
+      display: 'flex', alignItems: 'center', gap: 4,
+      padding: '0 10px', height: 26,
       background: '#FAFAFA',
-      borderTop: '1px dashed #EBEBEB',
-      borderBottom: '1px dashed #EBEBEB',
+      borderTop: '1px dashed #EBEBEB', borderBottom: '1px dashed #EBEBEB',
     }}>
+      {/* + Period */}
       <button
-        onClick={() => onInsert(afterIndex, 'short-break')}
+        className="gap-btn"
+        onClick={() => onInsertPeriod(afterIndex)}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 3,
           padding: '2px 9px', borderRadius: 12,
-          border: '1px solid #BBF7D0', background: 'transparent',
-          color: '#15803D', fontSize: 10, fontWeight: 600,
+          border: '1px solid #BFDBFE', background: 'transparent',
+          color: '#1D4ED8', fontSize: 10, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
-        <Coffee size={8} /> + Short break
+        <Plus size={8} /> Period
       </button>
+
       <span style={{ width: 1, height: 12, background: '#E5E7EB', flexShrink: 0 }} />
+
+      {/* + Break */}
       <button
-        onClick={() => onInsert(afterIndex, 'lunch')}
+        className="gap-btn"
+        onClick={() => setMode('break')}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 3,
           padding: '2px 9px', borderRadius: 12,
@@ -367,8 +442,29 @@ function GapRow({ afterIndex, onInsert }: {
           cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
-        <UtensilsCrossed size={8} /> + Lunch
+        <Coffee size={8} /> Break
       </button>
+
+      {/* ✦ Split periods — only when break above has partial classes */}
+      {isPartialBreak && (
+        <>
+          <span style={{ width: 1, height: 12, background: '#E5E7EB', flexShrink: 0 }} />
+          <button
+            className="gap-btn"
+            onClick={() => onInsertSplit(afterIndex)}
+            title={`Auto-create two periods: one for classes NOT in "${aboveRow.name}", one for classes IN it`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              padding: '2px 9px', borderRadius: 12,
+              border: '1px solid #C4B5FD', background: '#F5F3FF',
+              color: '#7C3AED', fontSize: 10, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            <Sparkles size={8} /> Split periods
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -379,7 +475,6 @@ function GapRow({ afterIndex, onInsert }: {
 export function StepBell() {
   const { config, setConfig, setStep, setBreaks } = useTimetableStore()
 
-  // ── Restore from localStorage (then fall back to store config) ──
   const [_saved] = useState<SavedBell | null>(loadSaved)
 
   const [shiftName,  setShiftName]  = useState<string>(  () => _saved?.shiftName ?? 'Main Shift')
@@ -393,31 +488,72 @@ export function StepBell() {
       ? config.workDays.map(d => d.charAt(0) + d.slice(1, 3).toLowerCase())
       : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
   })
-  const [rows,       setRows]       = useState<BellRow[]>(() => {
+  const [rows, setRows] = useState<BellRow[]>(() => {
     if (_saved?.rows?.length) return _saved.rows
     const dur = _saved?.periodDur ?? (config.defaultSessionDuration ?? 40)
     const cnt = _saved?.maxPeriods ?? (config.periodsPerDay ?? 8)
     return buildRows(cnt, dur)
   })
-  const [openPicker, setOpenPicker] = useState<string | null>(null)
+  const [openPicker,  setOpenPicker]  = useState<string | null>(null)
 
-  // ── Auto-save all state to localStorage ──────────────────────
+  // End-time edit mode — lets user click to reveal a <input type="time">
+  const [editingEnd,  setEditingEnd]  = useState(false)
+
+  // Timeline group tab (null = master/all, string = CLASS_GROUP name)
+  const [timelineGroup, setTimelineGroup] = useState<string | null>(null)
+
+  // ── Persistence ───────────────────────────────────────────────
   useEffect(() => {
     localStorage.setItem(BELL_KEY, JSON.stringify({
       shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows,
     } satisfies SavedBell))
   }, [shiftName, startTime, use12h, periodDur, maxPeriods, workDays, rows])
 
-  // ── Computed: start times cascade ────────────────────────────
+  // ── Derived: master start-time cascade ───────────────────────
   const startTimes = useMemo(() => computeStarts(startTime, rows), [startTime, rows])
 
   const endTime = rows.length > 0
     ? addMins(startTimes[rows.length - 1], rows[rows.length - 1].duration)
     : startTime
 
+  // ── Does any break apply to only some classes? ────────────────
+  const hasPartialBreaks = useMemo(() =>
+    rows.some(r =>
+      (r.type === 'short-break' || r.type === 'lunch') &&
+      r.classes.length > 0 &&
+      r.classes.length < ALL_CLASS_KEYS.length,
+    ), [rows])
+
+  // Reset timeline tab if no longer needed
+  useEffect(() => {
+    if (!hasPartialBreaks) setTimelineGroup(null)
+  }, [hasPartialBreaks])
+
+  // ── Timeline data (master or filtered per group) ──────────────
+  const timelineData = useMemo(() => {
+    if (!hasPartialBreaks || timelineGroup === null) {
+      return rows.map((row, i) => ({
+        row,
+        start: startTimes[i] ?? startTime,
+        end:   addMins(startTimes[i] ?? startTime, row.duration),
+      }))
+    }
+    const gm = CLASS_GROUPS.find(g => g.group === timelineGroup)
+    if (!gm) return []
+    const groupKeys = CLASSES.filter(c => c.group === gm.group).map(c => c.key)
+    const repKey    = groupKeys[0]
+    const fStarts   = computeStartsFiltered(startTime, rows, repKey)
+    return rows
+      .map((row, i) => ({
+        row,
+        start: fStarts[i],
+        end:   addMins(fStarts[i], row.duration),
+      }))
+      .filter(({ row }) => row.classes.some(k => groupKeys.includes(k)))
+  }, [hasPartialBreaks, timelineGroup, rows, startTimes, startTime])
+
   // ── Handlers ─────────────────────────────────────────────────
 
-  /** End time edit: adjusts last teaching row's duration to hit the target time. */
   const handleEndTimeEdit = (val: string) => {
     if (!val || !/^\d{2}:\d{2}$/.test(val)) return
     const [sh, sm] = startTime.split(':').map(Number)
@@ -429,20 +565,14 @@ export function StepBell() {
     if (diff === 0) return
     setRows(prev => {
       const next = [...prev]
-      // Find last teaching row to absorb the diff
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].type === 'teaching') {
           next[i] = { ...next[i], duration: Math.max(5, next[i].duration + diff) }
           return next
         }
       }
-      // Fallback: adjust last row
-      if (next.length > 0) {
-        next[next.length - 1] = {
-          ...next[next.length - 1],
-          duration: Math.max(5, next[next.length - 1].duration + diff),
-        }
-      }
+      if (next.length > 0)
+        next[next.length - 1] = { ...next[next.length - 1], duration: Math.max(5, next[next.length - 1].duration + diff) }
       return next
     })
   }
@@ -464,8 +594,7 @@ export function StepBell() {
         const existing = prev.find(r => r.id === `p${i + 1}`)
         return existing ? { ...existing, duration: periodDur } : mkPeriod(i + 1, periodDur)
       })
-      const result: BellRow[] = [assembly, ...newPeriods, ...breaks, dispersal]
-      return result
+      return [assembly, ...newPeriods, ...breaks, dispersal]
     })
   }
 
@@ -475,17 +604,14 @@ export function StepBell() {
   const updateRow = (id: string, patch: Partial<BellRow>) =>
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
 
-  /** All rows are deletable (including Assembly and Dispersal). */
   const deleteRow = (id: string) => setRows(prev => prev.filter(x => x.id !== id))
 
-  const insertBreak = (afterIndex: number, type: 'short-break' | 'lunch') => {
-    const newRow: BellRow = {
-      id: makeId(),
-      name: type === 'short-break' ? 'Short Break' : 'Lunch',
-      type,
-      duration: type === 'short-break' ? 10 : 30,
-      classes: [...ALL_CLASS_KEYS],
-    }
+  /** Insert a break with a user-supplied name.
+   *  Type auto-detected: /lunch/i → 'lunch', otherwise 'short-break'. */
+  const insertBreak = (afterIndex: number, name: string) => {
+    const type: RowType    = /lunch/i.test(name) ? 'lunch' : 'short-break'
+    const duration          = type === 'lunch' ? 30 : 10
+    const newRow: BellRow  = { id: makeId(), name, type, duration, classes: [...ALL_CLASS_KEYS] }
     setRows(prev => {
       const next = [...prev]
       next.splice(afterIndex + 1, 0, newRow)
@@ -493,18 +619,62 @@ export function StepBell() {
     })
   }
 
-  /** AI suggest: Assembly → Morning break → Periods → Lunch (after noon-crossing period)
-   *  → more periods → Afternoon break → Dispersal */
+  /** Insert a plain teaching period at a specific position. */
+  const insertPeriodAt = (afterIndex: number) => {
+    const lastP = rows.filter(r => r.type === 'teaching').length
+    const newRow: BellRow = mkPeriod(lastP + 1, periodDur)
+    setRows(prev => {
+      const next = [...prev]
+      next.splice(afterIndex + 1, 0, newRow)
+      return next
+    })
+  }
+
+  /**
+   * Smart split: when the row at `afterIndex` is a break with partial classes,
+   * insert two teaching periods:
+   *
+   *   Period A  — classes NOT in the break
+   *               In their filtered timeline this period starts at the same
+   *               moment the break begins (they skip the break).
+   *
+   *   Period B  — classes IN the break
+   *               In their filtered timeline this period starts right after
+   *               their break ends.
+   *
+   * Example (break = Nur–UKG lunch 12:05–12:35):
+   *   Period A (I–XII):   filtered start 12:05, end 12:45
+   *   Period B (Nur–UKG): filtered start 12:35, end 1:15
+   */
+  const insertSplitPeriods = (afterIndex: number) => {
+    const breakRow = rows[afterIndex]
+    if (!breakRow) return
+    const classesInBreak    = breakRow.classes
+    const classesNotInBreak = ALL_CLASS_KEYS.filter(k => !classesInBreak.includes(k))
+    if (classesNotInBreak.length === 0 || classesInBreak.length === 0) return
+
+    const lastP = rows.filter(r => r.type === 'teaching').length
+    const name  = `Period ${lastP + 1}`
+
+    const periodA: BellRow = { id: makeId(), name, type: 'teaching', duration: periodDur, classes: classesNotInBreak }
+    const periodB: BellRow = { id: makeId(), name, type: 'teaching', duration: periodDur, classes: classesInBreak    }
+
+    setRows(prev => {
+      const next = [...prev]
+      next.splice(afterIndex + 1, 0, periodA, periodB)
+      return next
+    })
+  }
+
+  /** AI suggest: Assembly → Morning break → Periods → Lunch → Periods → Afternoon break → Dispersal */
   const handleAISuggest = () => {
     const [sh, sm] = startTime.split(':').map(Number)
     let curMins = sh * 60 + sm
     const result: BellRow[] = []
 
-    // Assembly (15 min)
     result.push({ id: 'assembly', name: 'Assembly', type: 'assembly', duration: 15, classes: [...ALL_CLASS_KEYS] })
     curMins += 15
 
-    // Short break right after assembly (10 min)
     result.push({ id: makeId(), name: 'Morning Break', type: 'short-break', duration: 10, classes: [...ALL_CLASS_KEYS] })
     curMins += 10
 
@@ -512,8 +682,6 @@ export function StepBell() {
     for (let i = 0; i < maxPeriods; i++) {
       result.push(mkPeriod(i + 1, periodDur))
       curMins += periodDur
-
-      // Lunch after the period that crosses 12:00 PM (noon = 720 min)
       if (!lunchAdded && curMins >= 720) {
         result.push({ id: makeId(), name: 'Lunch Break', type: 'lunch', duration: 30, classes: [...ALL_CLASS_KEYS] })
         curMins += 30
@@ -521,35 +689,28 @@ export function StepBell() {
       }
     }
 
-    // If no period crossed noon (all periods finish before 12), insert lunch after middle period
     if (!lunchAdded && maxPeriods > 0) {
-      // assembly + morning-break are at indices 0 and 1; teaching periods start at 2
       const insertAt = 2 + Math.ceil(maxPeriods / 2)
       result.splice(insertAt, 0, { id: makeId(), name: 'Lunch Break', type: 'lunch', duration: 30, classes: [...ALL_CLASS_KEYS] })
     }
 
-    // Afternoon break (10 min) right before dispersal
     result.push({ id: makeId(), name: 'Afternoon Break', type: 'short-break', duration: 10, classes: [...ALL_CLASS_KEYS] })
-
-    // Dispersal (5 min)
     result.push({ id: 'dispersal', name: 'Dispersal', type: 'dispersal', duration: 5, classes: [...ALL_CLASS_KEYS] })
-
     setRows(result)
   }
 
-  // ── Capacity (weekly teaching slots per group) ────────────────
+  // ── Capacity ──────────────────────────────────────────────────
   const capacity = useMemo(() => {
     const tRows = rows.filter(r => r.type === 'teaching')
     const d = workDays.length
     return CLASS_GROUPS.map(gm => {
-      const groupKeys = CLASSES.filter(c => c.group === gm.group).map(c => c.key)
-      // count periods where at least one class from this group is selected
-      const count = tRows.filter(r => groupKeys.some(k => r.classes.includes(k))).length * d
+      const gk = CLASSES.filter(c => c.group === gm.group).map(c => c.key)
+      const count = tRows.filter(r => gk.some(k => r.classes.includes(k))).length * d
       return { label: gm.group, desc: gm.desc, count, color: gm.color }
     })
   }, [rows, workDays.length])
 
-  // ── Save to store + navigate ──────────────────────────────────
+  // ── Save + navigate ───────────────────────────────────────────
   const handleNext = () => {
     setConfig({
       workDays: workDays.map(d => DAY_TO_FULL[d] ?? d.toUpperCase()),
@@ -568,7 +729,7 @@ export function StepBell() {
   return (
     <div style={{
       padding: '20px 28px 32px',
-      maxWidth: 1140, margin: '0 auto',
+      maxWidth: 1160, margin: '0 auto',
       fontFamily: "'Inter', -apple-system, sans-serif",
     }}>
       <style>{`
@@ -579,6 +740,7 @@ export function StepBell() {
           transition: border-color .15s, box-shadow .15s;
         }
         .b-input:focus { border-color: #7C6FE0; box-shadow: 0 0 0 3px rgba(124,111,224,.10); }
+        .b-end-display:hover { border-color: #C4B5FD !important; cursor: pointer; }
         .b-cell {
           padding: 4px 7px; border: 1px solid transparent; border-radius: 5px;
           font-size: 13px; font-family: inherit; color: #13111E;
@@ -606,11 +768,13 @@ export function StepBell() {
         .b-nav-pri:hover { background: #1a1730 !important; }
         .gap-btn { transition: background .12s, border-color .12s; }
         .gap-btn:hover { background: rgba(0,0,0,0.03) !important; }
+        .tl-tab { transition: background .12s, color .12s, border-color .12s; }
+        .tl-tab:hover { border-color: #C4B5FD !important; color: #7C3AED !important; }
       `}</style>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 290px', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
 
-        {/* ══════════════════ LEFT ══════════════════ */}
+        {/* ══════════ LEFT ══════════ */}
         <div>
 
           {/* ─── SHIFT CONFIGURATION ─── */}
@@ -618,7 +782,6 @@ export function StepBell() {
             <SH>SHIFT CONFIGURATION</SH>
             <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB', padding: '16px 18px' }}>
 
-              {/* Shift name */}
               <input
                 className="b-input"
                 value={shiftName}
@@ -627,7 +790,6 @@ export function StepBell() {
                 style={{ fontWeight: 700, fontSize: 14, width: '100%', marginBottom: 16 }}
               />
 
-              {/* 5-field row */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 110px 90px', gap: 12, marginBottom: 14 }}>
 
                 {/* Start time */}
@@ -639,17 +801,36 @@ export function StepBell() {
                   <div style={FH}>{fmt12(startTime, use12h)}</div>
                 </div>
 
-                {/* End time — now editable; adjusts last teaching period */}
+                {/* End time — formatted display, click to edit inline */}
                 <div>
                   <div style={FL}>End time</div>
-                  <input
-                    className="b-input"
-                    type="time"
-                    value={endTime}
-                    onChange={e => handleEndTimeEdit(e.target.value)}
-                    style={{ width: '100%' }}
-                  />
-                  <div style={FH}>{fmt12(endTime, use12h)} · adjusts last period</div>
+                  {editingEnd ? (
+                    <input
+                      className="b-input"
+                      type="time"
+                      defaultValue={endTime}
+                      autoFocus
+                      onChange={e => handleEndTimeEdit(e.target.value)}
+                      onBlur={() => setEditingEnd(false)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur() }}
+                      style={{ width: '100%' }}
+                    />
+                  ) : (
+                    <div
+                      className="b-input b-end-display"
+                      onClick={() => setEditingEnd(true)}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center',
+                        justifyContent: 'space-between', userSelect: 'none',
+                      }}
+                    >
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontWeight: 700 }}>
+                        {fmt12(endTime, use12h)}
+                      </span>
+                      <span style={{ fontSize: 10, color: '#C4B5FD', fontWeight: 400 }}>✎</span>
+                    </div>
+                  )}
+                  <div style={FH}>adjusts last period</div>
                 </div>
 
                 {/* Period duration */}
@@ -710,12 +891,30 @@ export function StepBell() {
           {/* ─── BELL TIMING GRID ─── */}
           <div>
             <SH>BELL TIMING GRID</SH>
+
+            {/* Class-wise splits info banner */}
+            {hasPartialBreaks && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px', borderRadius: 8, marginBottom: 8,
+                background: '#F5F3FF', border: '1px solid #C4B5FD',
+                fontSize: 12, color: '#7C3AED',
+              }}>
+                <Sparkles size={13} color="#7C3AED" style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>Class-wise breaks detected.</strong>
+                  {' '}The timeline on the right auto-splits by class group.
+                  Use <strong>✦ Split periods</strong> in the gap below any partial break to auto-create two overlapping period rows.
+                </span>
+              </div>
+            )}
+
             <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB' }}>
 
               {/* Table header */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '88px 80px 80px 60px 100px 1fr 28px',
+                gridTemplateColumns: '88px 88px 88px 56px 100px 1fr 28px',
                 padding: '8px 14px',
                 background: '#F9FAFB',
                 borderBottom: '1px solid #E5E7EB',
@@ -738,7 +937,7 @@ export function StepBell() {
                       {/* Data row */}
                       <div className="b-row" style={{
                         display: 'grid',
-                        gridTemplateColumns: '88px 80px 80px 60px 100px 1fr 28px',
+                        gridTemplateColumns: '88px 88px 88px 56px 100px 1fr 28px',
                         padding: '6px 14px',
                         alignItems: 'center',
                         background: ROW_BG[row.type],
@@ -747,17 +946,17 @@ export function StepBell() {
                         <input className="b-cell" value={row.name}
                           onChange={e => updateRow(row.id, { name: e.target.value })} />
 
-                        {/* Start (computed) */}
+                        {/* Start (computed, full 12H/24H) */}
                         <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: '#374151', fontWeight: 600, padding: '4px 7px' }}>
-                          {fmt12(start, use12h).replace(/ [AP]M$/, '')}
+                          {fmt12(start, use12h)}
                         </div>
 
-                        {/* End (computed) */}
+                        {/* End (computed, full 12H/24H) */}
                         <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: '#374151', fontWeight: 600, padding: '4px 7px' }}>
-                          {fmt12(end, use12h).replace(/ [AP]M$/, '')}
+                          {fmt12(end, use12h)}
                         </div>
 
-                        {/* Duration (editable) */}
+                        {/* Duration */}
                         <NumInput
                           className="b-dur"
                           value={row.duration}
@@ -774,7 +973,7 @@ export function StepBell() {
                           {tm.label}
                         </div>
 
-                        {/* Class multi-select */}
+                        {/* Class picker */}
                         <ClassPicker
                           classes={row.classes}
                           onChange={cls => updateRow(row.id, { classes: cls })}
@@ -783,7 +982,7 @@ export function StepBell() {
                           setOpenId={setOpenPicker}
                         />
 
-                        {/* Delete — all rows deletable */}
+                        {/* Delete */}
                         <button className="b-del" onClick={() => deleteRow(row.id)} style={{
                           background: 'none', border: 'none', cursor: 'pointer',
                           color: '#FCA5A5', display: 'flex', alignItems: 'center',
@@ -795,7 +994,13 @@ export function StepBell() {
 
                       {/* Gap strip (not after last row) */}
                       {i < rows.length - 1 && (
-                        <GapRow afterIndex={i} onInsert={insertBreak} />
+                        <GapRow
+                          afterIndex={i}
+                          rows={rows}
+                          onInsertBreak={insertBreak}
+                          onInsertPeriod={insertPeriodAt}
+                          onInsertSplit={insertSplitPeriods}
+                        />
                       )}
                     </div>
                   )
@@ -804,7 +1009,7 @@ export function StepBell() {
 
               {/* Footer buttons */}
               <div style={{
-                padding: '10px 14px', display: 'flex', gap: 8,
+                padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap',
                 borderTop: '1px solid #F3F4F6',
                 borderRadius: '0 0 10px 10px',
               }}>
@@ -850,40 +1055,86 @@ export function StepBell() {
 
         </div>
 
-        {/* ══════════════════ RIGHT (sticky) ══════════════════ */}
+        {/* ══════════ RIGHT (sticky) ══════════ */}
         <div style={{ position: 'sticky', top: 16 }}>
 
           {/* ─── LIVE BELL TIMELINE ─── */}
-          <SH>LIVE BELL TIMELINE</SH>
+          <div style={{ marginBottom: 8 }}>
+            <SH>LIVE BELL TIMELINE</SH>
+
+            {/* Group tabs — only when partial breaks exist */}
+            {hasPartialBreaks && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+                <button
+                  className="tl-tab"
+                  onClick={() => setTimelineGroup(null)}
+                  style={{
+                    padding: '3px 10px', borderRadius: 20,
+                    border: `1px solid ${timelineGroup === null ? '#7C3AED' : '#E5E7EB'}`,
+                    background: timelineGroup === null ? '#7C3AED' : '#fff',
+                    color: timelineGroup === null ? '#fff' : '#6B7280',
+                    fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  All (master)
+                </button>
+                {CLASS_GROUPS.map(gm => {
+                  const isActive = timelineGroup === gm.group
+                  return (
+                    <button
+                      key={gm.group}
+                      className="tl-tab"
+                      onClick={() => setTimelineGroup(gm.group)}
+                      style={{
+                        padding: '3px 10px', borderRadius: 20,
+                        border: `1px solid ${isActive ? gm.color : '#E5E7EB'}`,
+                        background: isActive ? gm.color : '#fff',
+                        color: isActive ? '#fff' : '#6B7280',
+                        fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                      }}
+                    >
+                      {gm.desc}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           <div style={{
             background: '#fff', borderRadius: 10,
             border: '1px solid #E5E7EB', overflow: 'hidden', marginBottom: 14,
           }}>
-            {rows.map((row, i) => {
-              const tm    = TYPE_META[row.type]
-              const start = startTimes[i] ?? '—'
-              const grp   = row.classes.length === ALL_CLASS_KEYS.length ? 'All'
-                : row.classes.length === 0 ? '—'
-                : row.classes.length <= 4
-                  ? row.classes.map(k => CLASSES.find(c => c.key === k)?.short ?? k).join(', ')
-                  : `${row.classes.length} classes`
-              return (
-                <div key={row.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 12px',
-                  borderLeft: `3px solid ${tm.line}`,
-                  borderBottom: i < rows.length - 1 ? '1px solid #F9FAFB' : 'none',
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', fontFamily: "'DM Mono',monospace", minWidth: 44, flexShrink: 0 }}>
-                    {fmt12(start, use12h).replace(/ (AM|PM)$/, '')}
+            {timelineData.length === 0 ? (
+              <div style={{ padding: '16px', fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>
+                No rows for this class group
+              </div>
+            ) : (
+              timelineData.map(({ row, start }, idx) => {
+                const tm  = TYPE_META[row.type]
+                const grp = row.classes.length === ALL_CLASS_KEYS.length ? 'All'
+                  : row.classes.length === 0 ? '—'
+                  : row.classes.length <= 4
+                    ? row.classes.map(k => CLASSES.find(c => c.key === k)?.short ?? k).join(', ')
+                    : `${row.classes.length} classes`
+                return (
+                  <div key={row.id + idx} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px',
+                    borderLeft: `3px solid ${tm.line}`,
+                    borderBottom: idx < timelineData.length - 1 ? '1px solid #F9FAFB' : 'none',
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', fontFamily: "'DM Mono',monospace", minWidth: 58, flexShrink: 0 }}>
+                      {fmt12(start, use12h)}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#13111E' }}>{row.name}</div>
+                      <div style={{ fontSize: 10, color: '#9CA3AF' }}>{row.duration} min · {grp}</div>
+                    </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#13111E' }}>{row.name}</div>
-                    <div style={{ fontSize: 10, color: '#9CA3AF' }}>{row.duration} min · {grp}</div>
-                  </div>
-                </div>
-              )
-            })}
+                )
+              })
+            )}
           </div>
 
           {/* ─── AI CAPACITY ENGINE ─── */}
