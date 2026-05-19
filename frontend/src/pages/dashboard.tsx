@@ -9,7 +9,7 @@
  * "New timetable" → opens CreateTimetableModal (Page 5 — Wizard Step 0)
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { useTimetableStore } from '@/store/timetableStore'
 import { AppFooter } from '@/components/AppFooter'
@@ -19,7 +19,7 @@ import {
   LifeBuoy, BookOpen, Video,
   Bell, Plus, Sparkles, MoreHorizontal,
   ChevronRight, ArrowRight, ChevronLeft,
-  Zap, X,
+  Zap, X, Trash2,
 } from 'lucide-react'
 
 // ── helpers ────────────────────────────────────────────────────
@@ -160,6 +160,82 @@ const STATUS_META = {
   archived: { label: 'Archived', bg: '#F3F4F6', fg: '#6B7280', border: '#E5E7EB' },
 }
 
+// ── Timetable list (persisted in localStorage) ─────────────────
+type TTStatus = 'active' | 'draft' | 'archived'
+
+interface TTEntry {
+  id:             string
+  name:           string
+  status:         TTStatus
+  wizardStep:     number    // 0 = just named, 1–5 = wizard step reached
+  approxClasses:  number
+  approxTeachers: number
+  board:          string
+  startDate:      string
+  endDate:        string
+  createdAt:      number
+}
+
+const WIZARD_STEP_LABELS: Record<number, string> = {
+  0: 'Named',
+  1: 'Shift & timing',
+  2: 'Resources',
+  3: 'Allocation',
+  4: 'Student groups',
+  5: 'Complete',
+}
+
+const TTLIST_KEY    = 'schedu-tt-list'
+const ACTIVE_TT_KEY = 'schedu-active-tt'
+
+const SEED_TT: TTEntry[] = [
+  {
+    id: 'demo-tt1', name: 'AY 2025–26 · Main', status: 'active', wizardStep: 5,
+    approxClasses: 52, approxTeachers: 84, board: 'CBSE',
+    startDate: '2025-04-01', endDate: '2026-03-31',
+    createdAt: Date.now() - 3 * 86_400_000,
+  },
+  {
+    id: 'demo-tt2', name: 'AY 2025–26 · Revised (Post-annual)', status: 'draft', wizardStep: 3,
+    approxClasses: 52, approxTeachers: 84, board: 'CBSE',
+    startDate: '2025-04-01', endDate: '2026-03-31',
+    createdAt: Date.now() - 86_400_000,
+  },
+  {
+    id: 'demo-tt3', name: 'AY 2024–25 · Archive', status: 'archived', wizardStep: 5,
+    approxClasses: 49, approxTeachers: 80, board: 'CBSE',
+    startDate: '2024-04-01', endDate: '2025-03-31',
+    createdAt: Date.now() - 365 * 86_400_000,
+  },
+]
+
+function loadTTList(): TTEntry[] {
+  try {
+    const raw = localStorage.getItem(TTLIST_KEY)
+    if (raw === null) { saveTTList(SEED_TT); return SEED_TT }
+    return JSON.parse(raw) as TTEntry[]
+  } catch { return SEED_TT }
+}
+function saveTTList(list: TTEntry[]) {
+  localStorage.setItem(TTLIST_KEY, JSON.stringify(list))
+}
+function getActiveTTId(): string | null {
+  return localStorage.getItem(ACTIVE_TT_KEY)
+}
+function setActiveTTId(id: string | null) {
+  id ? localStorage.setItem(ACTIVE_TT_KEY, id) : localStorage.removeItem(ACTIVE_TT_KEY)
+}
+
+function ttMeta(t: TTEntry): string {
+  const cls = `${t.approxClasses} classes`
+  const tch = `${t.approxTeachers} teachers`
+  if (t.status === 'active')   return `${cls} · ${tch} · Generated`
+  if (t.status === 'archived') return `${cls} · ${tch} · Archived`
+  const stepLabel = WIZARD_STEP_LABELS[t.wizardStep] ?? `Step ${t.wizardStep}`
+  if (t.wizardStep === 0) return `${cls} · ${tch} · Just created`
+  return `${cls} · ${tch} · Step ${t.wizardStep}: ${stepLabel}`
+}
+
 const W_COLLAPSED = 56
 const W_EXPANDED  = 220
 const TRANSITION  = 'width 0.22s cubic-bezier(0.4,0,0.2,1)'
@@ -167,7 +243,12 @@ const TRANSITION  = 'width 0.22s cubic-bezier(0.4,0,0.2,1)'
 // ══════════════════════════════════════════════════════════════
 //  CreateTimetableModal  (Page 5 — Wizard Step 0)
 // ══════════════════════════════════════════════════════════════
-function CreateTimetableModal({ onClose }: { onClose: () => void }) {
+function CreateTimetableModal({
+  onClose, onOpenWizard,
+}: {
+  onClose: () => void
+  onOpenWizard: (entry: TTEntry) => void
+}) {
   const thisYear  = new Date().getFullYear()
   const nextYear  = thisYear + 1
 
@@ -182,18 +263,13 @@ function CreateTimetableModal({ onClose }: { onClose: () => void }) {
   const [teachers,   setTeachers]   = useState(84)
   const [rooms,      setRooms]      = useState(60)
 
-  // Recompute subject count when board changes
-  const handleBoard = (b: BoardKey) => {
-    setBoard(b)
-    setSubjects(BOARD_SUBJECTS[b])
-  }
+  const handleBoard = (b: BoardKey) => { setBoard(b); setSubjects(BOARD_SUBJECTS[b]) }
 
   const tags = useMemo(
     () => buildSectionTags(fromGrade, toGrade, board),
     [fromGrade, toGrade, board],
   )
 
-  // Format date for display
   const fmt = (iso: string) => {
     const d = new Date(iso + 'T00:00:00')
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -202,8 +278,19 @@ function CreateTimetableModal({ onClose }: { onClose: () => void }) {
   const BOARDS: BoardKey[] = ['CBSE', 'ICSE', 'IB', 'State', 'Custom']
 
   const handleOpen = () => {
-    useTimetableStore.getState().setConfig({ timetableName: name })
-    window.location.href = '/wizard'
+    const entry: TTEntry = {
+      id:             Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      name:           name.trim() || 'Untitled Timetable',
+      status:         'draft',
+      wizardStep:     0,
+      approxClasses:  classes,
+      approxTeachers: teachers,
+      board,
+      startDate,
+      endDate,
+      createdAt:      Date.now(),
+    }
+    onOpenWizard(entry)
   }
 
   return (
@@ -492,19 +579,64 @@ export function DashboardPage() {
   const [activeSideKey, setActiveSideKey] = useState<SideNavKey>('dashboard')
   const [sidebarOpen,   setSidebarOpen]   = useState(false)
   const [showCreate,    setShowCreate]    = useState(false)
+  const [ttList,        setTTList]        = useState<TTEntry[]>(loadTTList)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  // Sync the active wizard's step from Zustand store into the list
+  useEffect(() => {
+    const activeId = getActiveTTId()
+    if (!activeId) return
+    const storeStep = (store.step as number) ?? 1
+    setTTList(prev => {
+      const idx = prev.findIndex(t => t.id === activeId)
+      if (idx === -1) return prev
+      if (prev[idx].wizardStep === storeStep) return prev
+      const next = [...prev]
+      next[idx] = { ...next[idx], wizardStep: storeStep }
+      saveTTList(next)
+      return next
+    })
+  }, [store.step])
+
+  // ── Timetable actions ─────────────────────────────────────────
+  const handleTTCreated = (entry: TTEntry) => {
+    const next = [entry, ...ttList]
+    setTTList(next)
+    saveTTList(next)
+    setActiveTTId(entry.id)
+    useTimetableStore.getState().setConfig({ timetableName: entry.name } as any)
+    useTimetableStore.getState().setStep(1)
+    window.location.href = '/wizard'
+  }
+
+  const handleContinue = (t: TTEntry) => {
+    setActiveTTId(t.id)
+    useTimetableStore.getState().setConfig({ timetableName: t.name } as any)
+    useTimetableStore.getState().setStep(Math.max(1, t.wizardStep))
+    window.location.href = '/wizard'
+  }
+
+  const handleDelete = (id: string) => {
+    const next = ttList.filter(t => t.id !== id)
+    setTTList(next)
+    saveTTList(next)
+    if (getActiveTTId() === id) setActiveTTId(null)
+    setConfirmDelete(null)
+  }
 
   if (!user) { window.location.href = '/login'; return null }
 
   const firstName  = user.name?.split(' ')[0] ?? 'there'
   const schoolName = user.schoolName ?? 'Your School'
-  const hasTT      = Object.keys(store.classTT ?? {}).length > 0
   const conflicts  = (store.conflicts ?? []).length
+  const activeTTs  = ttList.filter(t => t.status === 'active').length
+  const draftTTs   = ttList.filter(t => t.status === 'draft').length
 
   const stats = [
     {
       label: 'Timetables',
-      value: hasTT ? 1 : 3,
-      sub: hasTT ? '1 active' : '2 active · 1 draft',
+      value: ttList.filter(t => t.status !== 'archived').length,
+      sub: [activeTTs && `${activeTTs} active`, draftTTs && `${draftTTs} draft`].filter(Boolean).join(' · ') || 'None yet',
       red: false,
     },
     {
@@ -853,28 +985,103 @@ export function DashboardPage() {
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <h2 style={{ fontSize: 15, fontWeight: 700, color: '#13111E' }}>Your timetables</h2>
-              <a href="#" style={{ fontSize: 13, color: '#7C6FE0', fontWeight: 500, textDecoration: 'none' }}>View all</a>
+              <span style={{ fontSize: 12, color: '#9CA3AF' }}>{ttList.length} total</span>
             </div>
+
+            {/* Delete confirmation overlay */}
+            {confirmDelete && (
+              <div style={{
+                background: '#FFF7ED', border: '1px solid #FED7AA',
+                borderRadius: 10, padding: '12px 16px', marginBottom: 8,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              }}>
+                <span style={{ fontSize: 13, color: '#92400E', fontWeight: 500 }}>
+                  Delete &ldquo;{ttList.find(t => t.id === confirmDelete)?.name}&rdquo;? This cannot be undone.
+                </span>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => setConfirmDelete(null)} style={{
+                    padding: '5px 14px', borderRadius: 7, border: '1px solid #D1D5DB',
+                    background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>
+                    Cancel
+                  </button>
+                  <button onClick={() => handleDelete(confirmDelete)} style={{
+                    padding: '5px 14px', borderRadius: 7, border: 'none',
+                    background: '#EF4444', color: '#fff', fontSize: 12, fontWeight: 700,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {DEMO_TT.map(tt => {
-                const sm = STATUS_META[tt.status]
+              {ttList.length === 0 && (
+                <div style={{
+                  background: '#fff', borderRadius: 10, border: '1px solid #E5E7EB',
+                  padding: '32px 16px', textAlign: 'center',
+                }}>
+                  <CalendarDays size={28} color="#D1D5DB" style={{ margin: '0 auto 10px' }} />
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#6B7280', marginBottom: 4 }}>No timetables yet</div>
+                  <div style={{ fontSize: 12, color: '#9CA3AF' }}>Click "+ New timetable" to create one</div>
+                </div>
+              )}
+              {ttList.map(tt => {
+                const sm        = STATUS_META[tt.status]
+                const isActive  = getActiveTTId() === tt.id
                 return (
                   <div key={tt.id} className="db-tt-row" style={{
                     background: '#fff', borderRadius: 10,
-                    border: '1px solid #E5E7EB', padding: '14px 16px',
-                    display: 'flex', alignItems: 'center', gap: 14,
+                    border: `1px solid ${isActive && tt.status === 'draft' ? '#C4B5FD' : '#E5E7EB'}`,
+                    padding: '13px 16px',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    boxShadow: isActive && tt.status === 'draft' ? '0 0 0 3px rgba(124,111,224,0.08)' : 'none',
                   }}>
+                    {/* Icon */}
                     <div style={{
-                      width: 36, height: 36, borderRadius: 8,
-                      background: '#F5F4F0', flexShrink: 0,
+                      width: 34, height: 34, borderRadius: 8,
+                      background: tt.status === 'draft' ? '#F5F3FF' : '#F5F4F0',
+                      flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <CalendarDays size={17} color="#6B7280" />
+                      <CalendarDays size={16} color={tt.status === 'draft' ? '#7C3AED' : '#6B7280'} />
                     </div>
+
+                    {/* Name + meta */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#13111E', marginBottom: 2 }}>{tt.name}</div>
-                      <div style={{ fontSize: 12, color: '#9CA3AF' }}>{tt.meta}</div>
+                      <div style={{
+                        fontSize: 14, fontWeight: 600, color: '#13111E',
+                        marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {tt.name}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: '#9CA3AF' }}>{ttMeta(tt)}</span>
+                        {tt.status === 'draft' && tt.wizardStep > 0 && (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3,
+                            padding: '1px 7px', borderRadius: 10,
+                            background: '#F0EDFF', border: '1px solid #C4B5FD',
+                            fontSize: 11, fontWeight: 600, color: '#7C3AED',
+                            flexShrink: 0,
+                          }}>
+                            Step {tt.wizardStep} · {WIZARD_STEP_LABELS[tt.wizardStep]}
+                          </span>
+                        )}
+                        {tt.status === 'draft' && tt.wizardStep === 0 && (
+                          <span style={{
+                            padding: '1px 7px', borderRadius: 10,
+                            background: '#FEF3C7', border: '1px solid #FDE68A',
+                            fontSize: 11, fontWeight: 600, color: '#92400E', flexShrink: 0,
+                          }}>
+                            Not started
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Status badge */}
                     <span style={{
                       padding: '3px 10px', borderRadius: 20,
                       background: sm.bg, color: sm.fg, border: `1px solid ${sm.border}`,
@@ -882,6 +1089,8 @@ export function DashboardPage() {
                     }}>
                       {sm.label}
                     </span>
+
+                    {/* Action buttons */}
                     {tt.status === 'active' && (
                       <>
                         <TtBtn onClick={() => { window.location.href = '/timetable' }}>Edit</TtBtn>
@@ -889,13 +1098,37 @@ export function DashboardPage() {
                       </>
                     )}
                     {tt.status === 'draft' && (
-                      <TtBtn primary onClick={() => { window.location.href = '/wizard' }}>
+                      <TtBtn primary onClick={() => handleContinue(tt)}>
                         Continue <ArrowRight size={12} />
                       </TtBtn>
                     )}
                     {tt.status === 'archived' && (
                       <TtBtn onClick={() => { window.location.href = '/timetable' }}>View</TtBtn>
                     )}
+
+                    {/* Delete button — all rows */}
+                    <button
+                      onClick={() => setConfirmDelete(confirmDelete === tt.id ? null : tt.id)}
+                      title="Delete timetable"
+                      style={{
+                        width: 28, height: 28, borderRadius: 6, flexShrink: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: confirmDelete === tt.id ? '#FEE2E2' : 'transparent',
+                        border: confirmDelete === tt.id ? '1px solid #FECACA' : '1px solid transparent',
+                        cursor: 'pointer', color: confirmDelete === tt.id ? '#EF4444' : '#D1D5DB',
+                        transition: 'all 0.13s',
+                      }}
+                      onMouseEnter={e => {
+                        if (confirmDelete !== tt.id) e.currentTarget.style.color = '#EF4444'
+                        if (confirmDelete !== tt.id) e.currentTarget.style.borderColor = '#FECACA'
+                      }}
+                      onMouseLeave={e => {
+                        if (confirmDelete !== tt.id) e.currentTarget.style.color = '#D1D5DB'
+                        if (confirmDelete !== tt.id) e.currentTarget.style.borderColor = 'transparent'
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 )
               })}
@@ -930,7 +1163,12 @@ export function DashboardPage() {
       </div>
 
       {/* ══ Create Timetable Modal ══ */}
-      {showCreate && <CreateTimetableModal onClose={() => setShowCreate(false)} />}
+      {showCreate && (
+        <CreateTimetableModal
+          onClose={() => setShowCreate(false)}
+          onOpenWizard={handleTTCreated}
+        />
+      )}
     </div>
   )
 }
