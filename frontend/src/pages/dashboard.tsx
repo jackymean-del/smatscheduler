@@ -1,29 +1,25 @@
 /**
- * Dashboard — Page 4 (Home)
+ * Dashboard — Page 4
  *
- * Layout:
- *   ┌─ Top nav ─────────────────────────────────────────────────┐
- *   │ [≡ schedU] │ Dashboard  Timetables  Resources  Reports │ … │
- *   ├─ Sidebar (collapsible) ──┬─ Content area ─────────────────┤
- *   │  🏠  Dashboard            │  Greeting + "+ New timetable" │
- *   │  📅  Timetables           │  Stats row (4 cards)          │
- *   │  👤  Teachers             │  AI insight banner            │
- *   │  📄  Documents            │  Your timetables list         │
- *   │  📊  Reports              │  Quick actions (3 cards)      │
- *   │                           │                               │
- *   │  ⚙️  Settings (bottom)    │                               │
- *   └───────────────────────────┴───────────────────────────────┘
+ * Sidebar sections:
+ *   WORKSPACE      — Dashboard · Schedules · Calendar · Insights
+ *   ADMINISTRATION — Users · Resources · Settings
+ *   HELP & SUPPORT — Support Center · Documentation · Book a Demo
  *
- * Sidebar collapses to 56 px (icons only) and expands to 200 px (icon + label).
+ * Collapses to 56 px (icons + tooltip) / expands to 220 px (icon + label + section headers).
+ * Bottom strip: user avatar · name · email · plan badge + Upgrade.
  */
 
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { useTimetableStore } from '@/store/timetableStore'
 import {
-  Home, Calendar, Users, FileText, BarChart2, Settings,
-  Bell, Plus, Sparkles, MoreHorizontal, ChevronRight,
-  ArrowRight, ChevronLeft, GraduationCap, BookOpen,
+  Home, CalendarDays, Calendar, BarChart2,
+  Users, Database, Settings,
+  LifeBuoy, BookOpen, Video,
+  Bell, Plus, Sparkles, MoreHorizontal,
+  ChevronRight, ArrowRight, ChevronLeft,
+  Zap,
 } from 'lucide-react'
 
 // ── helpers ────────────────────────────────────────────────────
@@ -35,8 +31,52 @@ function greeting() {
 }
 
 // ── types ──────────────────────────────────────────────────────
-type NavTab      = 'dashboard' | 'timetables' | 'resources' | 'reports'
-type SideNavKey  = 'home' | 'timetables' | 'teachers' | 'subjects' | 'documents' | 'reports'
+type NavTab     = 'dashboard' | 'timetables' | 'resources' | 'reports'
+type SideNavKey =
+  | 'dashboard' | 'schedules' | 'calendar' | 'insights'
+  | 'users' | 'resources' | 'settings'
+  | 'support' | 'docs' | 'demo'
+
+// ── Sidebar structure ──────────────────────────────────────────
+interface SideItem {
+  key: SideNavKey
+  icon: React.ElementType
+  label: string
+  href: string
+  external?: boolean
+}
+interface SideSection {
+  heading: string
+  items: SideItem[]
+}
+
+const SIDE_SECTIONS: SideSection[] = [
+  {
+    heading: 'WORKSPACE',
+    items: [
+      { key: 'dashboard', icon: Home,         label: 'Dashboard',  href: '/dashboard' },
+      { key: 'schedules', icon: CalendarDays, label: 'Schedules',  href: '/wizard'    },
+      { key: 'calendar',  icon: Calendar,     label: 'Calendar',   href: '#'          },
+      { key: 'insights',  icon: BarChart2,    label: 'Insights',   href: '#'          },
+    ],
+  },
+  {
+    heading: 'ADMINISTRATION',
+    items: [
+      { key: 'users',     icon: Users,    label: 'Users',     href: '#'           },
+      { key: 'resources', icon: Database, label: 'Resources', href: '/master-data' },
+      { key: 'settings',  icon: Settings, label: 'Settings',  href: '#'           },
+    ],
+  },
+  {
+    heading: 'HELP & SUPPORT',
+    items: [
+      { key: 'support', icon: LifeBuoy, label: 'Support Center',  href: '#',                        },
+      { key: 'docs',    icon: BookOpen, label: 'Documentation',   href: '#', external: true         },
+      { key: 'demo',    icon: Video,    label: 'Book a Demo',     href: '#', external: true         },
+    ],
+  },
+]
 
 // ── Demo timetable rows ────────────────────────────────────────
 const DEMO_TT = [
@@ -63,24 +103,10 @@ const STATUS_META = {
   archived: { label: 'Archived', bg: '#F3F4F6', fg: '#6B7280', border: '#E5E7EB' },
 }
 
-// ── Sidebar nav items ──────────────────────────────────────────
-const SIDE_ITEMS: {
-  key: SideNavKey
-  icon: React.ElementType
-  label: string
-  href: string
-}[] = [
-  { key: 'home',       icon: Home,           label: 'Dashboard',  href: '/dashboard'   },
-  { key: 'timetables', icon: Calendar,       label: 'Timetables', href: '/wizard'       },
-  { key: 'teachers',   icon: Users,          label: 'Teachers',   href: '/master-data'  },
-  { key: 'subjects',   icon: BookOpen,       label: 'Subjects',   href: '/master-data'  },
-  { key: 'documents',  icon: FileText,       label: 'Documents',  href: '#'             },
-  { key: 'reports',    icon: BarChart2,      label: 'Reports',    href: '#'             },
-]
-
-// ── Collapsed width / expanded width ──────────────────────────
+// ── Widths ─────────────────────────────────────────────────────
 const W_COLLAPSED = 56
-const W_EXPANDED  = 200
+const W_EXPANDED  = 220
+const TRANSITION  = 'width 0.22s cubic-bezier(0.4,0,0.2,1)'
 
 // ── Component ──────────────────────────────────────────────────
 export function DashboardPage() {
@@ -88,9 +114,9 @@ export function DashboardPage() {
   const store = useTimetableStore() as any
   const { sections, staff } = store
 
-  const [activeTab,       setActiveTab]       = useState<NavTab>('dashboard')
-  const [activeSideItem,  setActiveSideItem]  = useState<SideNavKey>('home')
-  const [sidebarOpen,     setSidebarOpen]     = useState(false)
+  const [activeTab,      setActiveTab]      = useState<NavTab>('dashboard')
+  const [activeSideKey,  setActiveSideKey]  = useState<SideNavKey>('dashboard')
+  const [sidebarOpen,    setSidebarOpen]    = useState(false)
 
   if (!user) { window.location.href = '/login'; return null }
 
@@ -127,7 +153,14 @@ export function DashboardPage() {
   ]
 
   const SW = sidebarOpen ? W_EXPANDED : W_COLLAPSED
-  const transition = 'width 0.22s cubic-bezier(0.4,0,0.2,1)'
+
+  // Avatar initials (up to 2 chars)
+  const initials = (user.name ?? 'U')
+    .split(' ')
+    .slice(0, 2)
+    .map((w: string) => w[0])
+    .join('')
+    .toUpperCase()
 
   return (
     <div style={{
@@ -137,26 +170,24 @@ export function DashboardPage() {
     }}>
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        .db-tab { transition: background 0.13s, color 0.13s; }
+        .db-tab      { transition: background 0.13s, color 0.13s; }
         .db-tab:hover { background: #F5F4F0 !important; }
         .db-icon-btn { transition: background 0.13s; border-radius: 9px; }
         .db-icon-btn:hover { background: #EDE9FF !important; }
-        .db-side-item { transition: background 0.13s, color 0.13s; }
-        .db-side-item:hover { background: #F5F3FF !important; }
-        .db-tt-row { transition: box-shadow 0.14s, border-color 0.14s; }
+        .sb-item     { transition: background 0.13s, color 0.13s; text-decoration: none; }
+        .sb-item:hover { background: #F0EDFF !important; }
+        .db-tt-row   { transition: box-shadow 0.14s, border-color 0.14s; }
         .db-tt-row:hover { border-color: #D1D5DB !important; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
-        .db-qa-card { transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+        .db-qa-card  { transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
         .db-qa-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.07); border-color: #D1D5DB !important; }
-        .db-action-btn { transition: background 0.13s, border-color 0.13s; }
-        .db-action-btn:hover { background: #F3F4F6 !important; }
-        .db-toggle-btn { transition: background 0.13s, transform 0.22s; }
-        .db-toggle-btn:hover { background: #F0EDFF !important; }
-        .sb-label { white-space: nowrap; overflow: hidden; transition: opacity 0.18s, max-width 0.22s; }
+        .db-act-btn  { transition: background 0.13s; }
+        .db-act-btn:hover { background: #F3F4F6 !important; }
+        .sb-label    { white-space: nowrap; overflow: hidden; pointer-events: none; }
+        .sb-upgrade  { transition: background 0.14s; }
+        .sb-upgrade:hover { background: #6655CC !important; }
       `}</style>
 
-      {/* ══════════════════════════════
-          TOP NAV
-      ══════════════════════════════ */}
+      {/* ══ TOP NAV ══════════════════════════════════════════ */}
       <header style={{
         height: 52, background: '#fff',
         borderBottom: '1px solid #E5E7EB',
@@ -165,41 +196,36 @@ export function DashboardPage() {
         flexShrink: 0, zIndex: 100,
         position: 'sticky', top: 0,
       }}>
-        {/* Logo block — matches sidebar width */}
+        {/* Logo / toggle block */}
         <div style={{
           width: SW, height: 52, flexShrink: 0,
           display: 'flex', alignItems: 'center',
           borderRight: '1px solid #F0EDFF',
           overflow: 'hidden',
-          transition,
-          paddingLeft: sidebarOpen ? 16 : 0,
+          transition: TRANSITION,
+          paddingLeft: sidebarOpen ? 14 : 0,
           justifyContent: sidebarOpen ? 'flex-start' : 'center',
-          gap: sidebarOpen ? 8 : 0,
+          gap: 8,
         }}>
-          {/* Toggle button */}
           <button
             onClick={() => setSidebarOpen(o => !o)}
-            className="db-toggle-btn"
-            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            title={sidebarOpen ? 'Collapse' : 'Expand'}
             style={{
               width: 28, height: 28, borderRadius: 7, flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: '#6B7280',
+              background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280',
+              transition: 'background 0.13s',
             }}
           >
-            {sidebarOpen
-              ? <ChevronLeft  size={15} />
-              : <ChevronRight size={15} />}
+            {sidebarOpen ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
 
-          {/* Logo text — only when expanded */}
           {sidebarOpen && (
             <a href="/" style={{ textDecoration: 'none', lineHeight: 1 }}>
               <span style={{ fontSize: 14, fontWeight: 900, letterSpacing: '-0.3px', color: '#13111E' }}>
                 sched<span style={{
                   color: '#7C6FE0',
-                  fontFamily: "'DM Serif Display',Georgia,serif",
+                  fontFamily: "'DM Serif Display', Georgia, serif",
                   fontStyle: 'italic',
                 }}>U</span>
               </span>
@@ -215,8 +241,7 @@ export function DashboardPage() {
             { key: 'resources',  label: 'Resources'  },
             { key: 'reports',    label: 'Reports'    },
           ] as { key: NavTab; label: string }[]).map(t => (
-            <button key={t.key}
-              className="db-tab"
+            <button key={t.key} className="db-tab"
               onClick={() => setActiveTab(t.key)}
               style={{
                 padding: '5px 14px', borderRadius: 7, border: 'none',
@@ -230,7 +255,7 @@ export function DashboardPage() {
           ))}
         </nav>
 
-        {/* Right: school + bell + avatar + menu */}
+        {/* Right */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 500, color: '#374151' }}>{schoolName}</span>
 
@@ -251,9 +276,9 @@ export function DashboardPage() {
             width: 30, height: 30, borderRadius: '50%',
             background: '#7C6FE0', color: '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0,
           }}>
-            {(user.name?.[0] ?? 'U').toUpperCase()}
+            {initials}
           </div>
 
           <button onClick={() => { logout(); window.location.href = '/login' }}
@@ -267,12 +292,10 @@ export function DashboardPage() {
         </div>
       </header>
 
-      {/* ══════════════════════════════
-          BODY  (sidebar + content)
-      ══════════════════════════════ */}
+      {/* ══ BODY ══════════════════════════════════════════════ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-        {/* ── Collapsible sidebar ── */}
+        {/* ── Sidebar ── */}
         <aside style={{
           width: SW,
           flexShrink: 0,
@@ -280,104 +303,164 @@ export function DashboardPage() {
           borderRight: '1px solid #E5E7EB',
           display: 'flex',
           flexDirection: 'column',
-          padding: '8px 0',
-          gap: 2,
-          transition,
+          transition: TRANSITION,
           overflow: 'hidden',
         }}>
+          {/* Scrollable nav area */}
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 8px 0' }}>
+            {SIDE_SECTIONS.map((section, si) => (
+              <div key={section.heading} style={{ marginBottom: si < SIDE_SECTIONS.length - 1 ? 8 : 0 }}>
 
-          {/* Nav items */}
-          {SIDE_ITEMS.map(item => {
-            const isActive = activeSideItem === item.key
-            const Icon = item.icon
-            return (
-              <a
-                key={item.key}
-                href={item.href}
-                onClick={e => {
-                  if (item.href === '#') e.preventDefault()
-                  setActiveSideItem(item.key)
-                }}
-                className="db-side-item"
-                title={!sidebarOpen ? item.label : undefined}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: sidebarOpen ? 10 : 0,
-                  justifyContent: sidebarOpen ? 'flex-start' : 'center',
-                  padding: sidebarOpen ? '9px 14px' : '9px 0',
-                  margin: '0 8px',
-                  borderRadius: 9,
-                  background: isActive ? '#EDE9FF' : 'none',
-                  color: isActive ? '#7C3AED' : '#6B7280',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                  transition: 'background 0.13s, color 0.13s',
-                  minWidth: 0,
-                  overflow: 'hidden',
-                }}
-              >
-                <Icon size={18} style={{ flexShrink: 0 }} />
-                <span
-                  className="sb-label"
-                  style={{
-                    fontSize: 13,
-                    fontWeight: isActive ? 600 : 500,
-                    opacity: sidebarOpen ? 1 : 0,
-                    maxWidth: sidebarOpen ? 140 : 0,
-                    display: 'block',
-                  }}
-                >
-                  {item.label}
-                </span>
-              </a>
-            )
-          })}
+                {/* Section heading — only when expanded */}
+                {sidebarOpen && (
+                  <div style={{
+                    fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+                    color: '#9CA3AF', padding: '10px 10px 4px',
+                    userSelect: 'none',
+                  }}>
+                    {section.heading}
+                  </div>
+                )}
 
-          {/* Spacer pushes Settings to bottom */}
-          <div style={{ flex: 1 }} />
+                {/* Divider line when collapsed */}
+                {!sidebarOpen && si > 0 && (
+                  <div style={{
+                    height: 1, background: '#F3F4F6',
+                    margin: '6px 10px',
+                  }} />
+                )}
 
-          {/* Settings */}
-          <a
-            href="#"
-            onClick={e => { e.preventDefault(); setActiveSideItem('home') }}
-            className="db-side-item"
-            title={!sidebarOpen ? 'Settings' : undefined}
-            style={{
+                {section.items.map(item => {
+                  const isActive = activeSideKey === item.key
+                  const Icon = item.icon
+                  return (
+                    <a
+                      key={item.key}
+                      href={item.href === '#' ? undefined : item.href}
+                      onClick={e => {
+                        if (item.href === '#') e.preventDefault()
+                        setActiveSideKey(item.key)
+                      }}
+                      className="sb-item"
+                      title={!sidebarOpen ? item.label : undefined}
+                      target={item.external ? '_blank' : undefined}
+                      rel={item.external ? 'noopener noreferrer' : undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: sidebarOpen ? 10 : 0,
+                        justifyContent: sidebarOpen ? 'flex-start' : 'center',
+                        padding: sidebarOpen ? '8px 10px' : '9px 0',
+                        borderRadius: 8,
+                        background: isActive ? '#EDE9FF' : 'none',
+                        color: isActive ? '#7C3AED' : '#4B5563',
+                        cursor: 'pointer',
+                        marginBottom: 1,
+                        overflow: 'hidden',
+                        minWidth: 0,
+                      }}
+                    >
+                      <Icon
+                        size={17}
+                        style={{ flexShrink: 0, color: isActive ? '#7C3AED' : '#6B7280' }}
+                      />
+
+                      <span
+                        className="sb-label"
+                        style={{
+                          fontSize: 13,
+                          fontWeight: isActive ? 600 : 400,
+                          opacity: sidebarOpen ? 1 : 0,
+                          maxWidth: sidebarOpen ? 160 : 0,
+                          transition: 'opacity 0.15s, max-width 0.22s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          flex: 1,
+                        }}
+                      >
+                        {item.label}
+                        {item.external && sidebarOpen && (
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ opacity: 0.45, flexShrink: 0 }}>
+                            <path d="M1 9L9 1M9 1H3M9 1V7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </span>
+                    </a>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* ── User + Plan strip ── */}
+          <div style={{
+            borderTop: '1px solid #F3F4F6',
+            padding: sidebarOpen ? '10px 12px' : '10px 8px',
+            flexShrink: 0,
+            overflow: 'hidden',
+          }}>
+            {/* User row */}
+            <div style={{
               display: 'flex',
               alignItems: 'center',
               gap: sidebarOpen ? 10 : 0,
               justifyContent: sidebarOpen ? 'flex-start' : 'center',
-              padding: sidebarOpen ? '9px 14px' : '9px 0',
-              margin: '0 8px',
-              borderRadius: 9,
-              background: 'none',
-              color: '#9CA3AF',
-              textDecoration: 'none',
-              cursor: 'pointer',
+              marginBottom: sidebarOpen ? 8 : 0,
               overflow: 'hidden',
-            }}
-          >
-            <Settings size={18} style={{ flexShrink: 0 }} />
-            <span
-              className="sb-label"
-              style={{
-                fontSize: 13, fontWeight: 500,
-                opacity: sidebarOpen ? 1 : 0,
-                maxWidth: sidebarOpen ? 140 : 0,
-                display: 'block',
-              }}
-            >
-              Settings
-            </span>
-          </a>
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: '#7C6FE0', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 700, flexShrink: 0,
+              }}>
+                {initials}
+              </div>
+              {sidebarOpen && (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 600, color: '#13111E',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {user.name ?? 'User'}
+                  </div>
+                  <div style={{
+                    fontSize: 11, color: '#9CA3AF',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {user.email ?? ''}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Plan badge + Upgrade — only when expanded */}
+            {sidebarOpen && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                background: '#F9F8FF', borderRadius: 8,
+                border: '1px solid #EDE9FF', padding: '7px 10px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Zap size={13} color="#7C6FE0" />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#7C6FE0' }}>Free Plan</span>
+                </div>
+                <button className="sb-upgrade" style={{
+                  padding: '4px 12px', borderRadius: 6, border: 'none',
+                  background: '#7C6FE0', color: '#fff',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}>
+                  Upgrade
+                </button>
+              </div>
+            )}
+          </div>
         </aside>
 
         {/* ── Main content ── */}
-        <main style={{
-          flex: 1, overflowY: 'auto',
-          padding: '24px 28px',
-        }}>
+        <main style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
 
           {/* Greeting row */}
           <div style={{
@@ -460,16 +543,11 @@ export function DashboardPage() {
               display: 'flex', alignItems: 'center',
               justifyContent: 'space-between', marginBottom: 12,
             }}>
-              <h2 style={{ fontSize: 15, fontWeight: 700, color: '#13111E' }}>
-                Your timetables
-              </h2>
-              <a href="#" style={{
-                fontSize: 13, color: '#7C6FE0', fontWeight: 500, textDecoration: 'none',
-              }}>
+              <h2 style={{ fontSize: 15, fontWeight: 700, color: '#13111E' }}>Your timetables</h2>
+              <a href="#" style={{ fontSize: 13, color: '#7C6FE0', fontWeight: 500, textDecoration: 'none' }}>
                 View all
               </a>
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {DEMO_TT.map(tt => {
                 const sm = STATUS_META[tt.status]
@@ -484,27 +562,21 @@ export function DashboardPage() {
                       background: '#F5F4F0', flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Calendar size={17} color="#6B7280" />
+                      <CalendarDays size={17} color="#6B7280" />
                     </div>
-
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 14, fontWeight: 600, color: '#13111E', marginBottom: 2,
-                      }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#13111E', marginBottom: 2 }}>
                         {tt.name}
                       </div>
                       <div style={{ fontSize: 12, color: '#9CA3AF' }}>{tt.meta}</div>
                     </div>
-
                     <span style={{
                       padding: '3px 10px', borderRadius: 20,
-                      background: sm.bg, color: sm.fg,
-                      border: `1px solid ${sm.border}`,
+                      background: sm.bg, color: sm.fg, border: `1px solid ${sm.border}`,
                       fontSize: 12, fontWeight: 600, flexShrink: 0,
                     }}>
                       {sm.label}
                     </span>
-
                     {tt.status === 'active' && (
                       <>
                         <TtBtn onClick={() => { window.location.href = '/timetable' }}>Edit</TtBtn>
@@ -539,8 +611,8 @@ export function DashboardPage() {
                   href: '/master-data',
                 },
                 {
-                  icon: <FileText size={22} color="#6B7280" />,
-                  title: 'Manage rooms',
+                  icon: <Database size={22} color="#6B7280" />,
+                  title: 'Manage resources',
                   desc: 'Add venues, set capacity, configure availability',
                   href: '/master-data',
                 },
@@ -554,18 +626,13 @@ export function DashboardPage() {
                 <a key={qa.title} href={qa.href} style={{ textDecoration: 'none' }}>
                   <div className="db-qa-card" style={{
                     background: '#fff', borderRadius: 10,
-                    border: '1px solid #E5E7EB', padding: '18px 16px',
-                    cursor: 'pointer',
+                    border: '1px solid #E5E7EB', padding: '18px 16px', cursor: 'pointer',
                   }}>
                     <div style={{ marginBottom: 12 }}>{qa.icon}</div>
-                    <div style={{
-                      fontSize: 14, fontWeight: 700, color: '#13111E', marginBottom: 4,
-                    }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#13111E', marginBottom: 4 }}>
                       {qa.title}
                     </div>
-                    <div style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 1.55 }}>
-                      {qa.desc}
-                    </div>
+                    <div style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 1.55 }}>{qa.desc}</div>
                   </div>
                 </a>
               ))}
@@ -585,7 +652,7 @@ function TtBtn({ children, onClick, primary }: {
   primary?: boolean
 }) {
   return (
-    <button onClick={onClick} className="db-action-btn" style={{
+    <button onClick={onClick} className="db-act-btn" style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
       padding: '6px 14px', borderRadius: 7, cursor: 'pointer',
       border: primary ? 'none' : '1px solid #E5E7EB',
