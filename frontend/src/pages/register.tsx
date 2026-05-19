@@ -94,6 +94,8 @@ export function RegisterPage() {
   const [lastName,    setLastName]    = useState('')
   const [email,       setEmail]       = useState('')
   const [school,      setSchool]      = useState('')
+  const [state,       setState]       = useState('')
+  const [country,     setCountry]     = useState('')
   const [board,       setBoard]       = useState('')
   const [schoolType,  setSchoolType]  = useState('')
   const [password,    setPassword]    = useState('')
@@ -235,7 +237,7 @@ export function RegisterPage() {
             Create your account
           </h1>
           <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 28 }}>
-            Set up your school on schedU in under 2 minutes.
+            Set up your institution in under 2 minutes.
           </p>
 
           {/* Form */}
@@ -273,7 +275,23 @@ export function RegisterPage() {
                 placeholder="e.g. Lincoln International School" />
             </div>
 
-            {/* Board / School type */}
+            {/* State / Country */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={lbl}>State / Province</label>
+                <input className="reg-input" value={state}
+                  onChange={e => setState(e.target.value)}
+                  placeholder="e.g. California" />
+              </div>
+              <div>
+                <label style={lbl}>Country</label>
+                <input className="reg-input" value={country}
+                  onChange={e => setCountry(e.target.value)}
+                  placeholder="e.g. United States" />
+              </div>
+            </div>
+
+            {/* Board / Institution type */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={lbl}>Board</label>
@@ -284,7 +302,7 @@ export function RegisterPage() {
                 </select>
               </div>
               <div>
-                <label style={lbl}>School type</label>
+                <label style={lbl}>Institution type</label>
                 <select className="reg-select" value={schoolType}
                   onChange={e => setSchoolType(e.target.value)}>
                   <option value="">Select type</option>
