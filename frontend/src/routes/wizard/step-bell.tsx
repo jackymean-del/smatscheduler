@@ -2244,8 +2244,7 @@ export function StepBell() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 
-                {/* Vary by day toggle — advanced only */}
-                {isAdvanced && (<>
+                {/* Vary by day toggle */}
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
                   <div style={{ position: 'relative', width: 30, height: 16, flexShrink: 0 }}>
                     <input type="checkbox" checked={varyByDay}
@@ -2260,7 +2259,6 @@ export function StepBell() {
                 </label>
 
                 <div style={{ width: 1, height: 14, background: '#E5E7EB', flexShrink: 0 }} />
-                </>)}
 
                 <button
                   onClick={handleOpenCwPanel}
