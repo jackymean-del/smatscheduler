@@ -295,6 +295,13 @@ export function DataGrid<T>({
   const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Refs that mirror state — always up-to-date even inside stale closures /
+  // React 18 concurrent batching. Used for reliable single-click edit detection.
+  const selectionRef = useRef<{ r: number; c: number } | null>(null)
+  const editingRef   = useRef<{ r: number; c: number } | null>(null)
+  useEffect(() => { selectionRef.current = selection }, [selection])
+  useEffect(() => { editingRef.current   = editing   }, [editing])
+
   // ── v2: undo/redo history (snapshot of rows on each user action) ──
   const historyRef = useRef<T[][]>([])
   const historyIndexRef = useRef<number>(-1)
@@ -434,6 +441,12 @@ export function DataGrid<T>({
       if (ae && ae !== document.body && ae !== document.documentElement
           && ae !== containerRef.current && !containerRef.current?.contains(ae)) return
 
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setEditing(null); setSelection(null); setSelectionEnd(null)
+        containerRef.current?.blur()
+        return
+      }
       if (e.key === 'ArrowDown')  { e.preventDefault(); moveSelection(1, 0) }
       else if (e.key === 'ArrowUp')    { e.preventDefault(); moveSelection(-1, 0) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1) }
@@ -1178,14 +1191,15 @@ export function DataGrid<T>({
       <input type="file" ref={xlsxRef} accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style={{ display: 'none' }}
         onChange={e => { const f = e.target.files?.[0]; if (f) importXLSX(f); e.target.value = '' }} />
 
-      {/* overflow-y:clip lets the table grow naturally and lets sticky <th> anchor to
-          the nearest REAL scroll ancestor (the page or a parent overflow:auto container).
-          overflow-x:auto is still needed for wide tables. When maxHeight is passed
-          explicitly, switch to the classic inner-scroll mode. */}
-      <div style={maxHeight
-        ? { overflow: 'auto', maxHeight }
-        : { overflowX: 'auto', overflowY: 'clip' as any }
-      }>
+      {/* Always use overflow:auto so:
+          1. Position:sticky on <th> anchors to THIS div (reliable, consistent).
+          2. Wide tables scroll horizontally within the card.
+          3. maxHeight constrains vertical size; default fills ~viewport minus chrome. */}
+      <div style={{
+        overflow: 'auto',
+        maxHeight: maxHeight ?? 'calc(100vh - 320px)',
+        minHeight: 120,
+      }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed' }}>
 
           {/* ── colgroup: explicit pixel widths for every column ── */}
@@ -1282,10 +1296,17 @@ export function DataGrid<T>({
           <tbody>
             {/* ── Normal rows ── */}
             {!transposed && filteredRows.map((row, ri) => (
-              <tr key={rowKey(row)}
+              // key=ri (index) → React updates in-place instead of unmount/remount on delete,
+              // which prevents the hover-buttons flicker.
+              <tr key={ri}
                 onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}
                 onMouseEnter={() => setHoveredRow(ri)}
-                onMouseLeave={() => { setHoveredRow(null); setInsertMenuRow(null) }}>
+                onMouseLeave={() => {
+                  // Don't hide buttons while the insert dropdown for THIS row is open
+                  // (its fixed backdrop would otherwise fire a spurious mouseleave)
+                  if (insertMenuRow !== ri) setHoveredRow(null)
+                  else setHoveredRow(ri)  // keep visible
+                }}>
 
                 {/* Row number */}
                 <td style={tdRowNum(ri)}>{ri + 1}</td>
@@ -1311,11 +1332,14 @@ export function DataGrid<T>({
                     <td key={col.key}
                       onMouseDown={e => {
                         containerRef.current?.focus({ preventScroll: true })
-                        if (e.shiftKey && selection) {
+                        if (e.shiftKey && selectionRef.current) {
                           setSelectionEnd({ r: ri, c: ci })
                         } else {
-                          // If cell is already selected and not yet editing → enter edit mode
-                          const alreadySelected = selection?.r === ri && selection?.c === ci && !editing
+                          // Use ref (not state) so value is always current even under React 18 batching
+                          const alreadySelected =
+                            selectionRef.current?.r === ri &&
+                            selectionRef.current?.c === ci &&
+                            !editingRef.current
                           setSelection({ r: ri, c: ci }); setSelectionEnd(null)
                           if (alreadySelected && !col.readonly && col.type !== 'computed' && col.type !== 'toggle') {
                             setEditing({ r: ri, c: ci })
@@ -1428,7 +1452,7 @@ export function DataGrid<T>({
                           </button>
                           {insertMenuRow === ri && (
                             <>
-                              <div style={{ position: 'fixed', inset: 0, zIndex: 3000 }} onClick={() => setInsertMenuRow(null)} />
+                              <div style={{ position: 'fixed', inset: 0, zIndex: 3000, pointerEvents: 'all' }} onClick={() => { setInsertMenuRow(null); setHoveredRow(null) }} />
                               <div style={{
                                 position: 'absolute' as const, top: '100%', right: 0, marginTop: 3,
                                 background: '#fff', border: `1px solid ${TOK.containerBorder}`,
@@ -1503,7 +1527,10 @@ export function DataGrid<T>({
                     <td key={colIdx}
                       onMouseDown={() => {
                         containerRef.current?.focus({ preventScroll: true })
-                        const alreadySelected = selection?.r === colIdx && selection?.c === fieldIdx && !editing
+                        const alreadySelected =
+                          selectionRef.current?.r === colIdx &&
+                          selectionRef.current?.c === fieldIdx &&
+                          !editingRef.current
                         setSelection({ r: colIdx, c: fieldIdx }); setSelectionEnd(null)
                         if (alreadySelected && !srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle') {
                           setEditing({ r: colIdx, c: fieldIdx })
