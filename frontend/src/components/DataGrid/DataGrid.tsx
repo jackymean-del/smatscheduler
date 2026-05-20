@@ -27,7 +27,7 @@
  * The grid is generic over a row type T identified by rowKey(row).
  */
 
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import {
   Plus, Upload, Download, ClipboardPaste, Search, RefreshCw,
@@ -274,9 +274,11 @@ export function DataGrid<T>({
   // context-menu (right-click row)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; ri: number } | null>(null)
 
-  // Row hover actions
+  // Row hover — only set when hovering the ACTIONS column cell (not the whole row)
   const [hoveredRow, setHoveredRow] = useState<number | null>(null)
   const [insertMenuRow, setInsertMenuRow] = useState<number | null>(null)
+  // Per-button hover — key: `${ri}-plus` | `${ri}-copy` | `${ri}-delete`
+  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null)
 
   // Width of the always-present row-actions gutter column
   // 4 buttons × 28px + 3 gaps × 4px + 2 sides × 6px padding = 136px → use 136
@@ -523,8 +525,10 @@ export function DataGrid<T>({
     return () => window.removeEventListener('keydown', onKey)
   }, [selection, selectionEnd, editing, moveSelection, columns, rows, filteredRows, originalIndex, getCell, setCell, onChange])
 
-  // Focus the edit input when entering edit mode + select-all on first entry
-  useEffect(() => {
+  // Focus + select-all the edit input immediately after the DOM commits.
+  // useLayoutEffect fires synchronously before browser paint — this guarantees
+  // the input is focused before any setTimeout callbacks can race against it.
+  useLayoutEffect(() => {
     if (editing && editInputRef.current) {
       editInputRef.current.focus()
       if (editInputRef.current instanceof HTMLInputElement) {
@@ -1314,14 +1318,7 @@ export function DataGrid<T>({
               // key=ri (index) → React updates in-place instead of unmount/remount on delete,
               // which prevents the hover-buttons flicker.
               <tr key={ri}
-                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}
-                onMouseEnter={() => setHoveredRow(ri)}
-                onMouseLeave={() => {
-                  // Don't hide buttons while the insert dropdown for THIS row is open
-                  // (its fixed backdrop would otherwise fire a spurious mouseleave)
-                  if (insertMenuRow !== ri) setHoveredRow(null)
-                  else setHoveredRow(ri)  // keep visible
-                }}>
+                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}>
 
                 {/* Row number */}
                 <td style={tdRowNum(ri)}>{ri + 1}</td>
@@ -1352,25 +1349,24 @@ export function DataGrid<T>({
                           editingRef.current?.r === ri && editingRef.current?.c === ci
                         if (alreadyEditingThisCell) return
 
+                        // containerRef.focus() is intentional:
+                        // • Gives the container keyboard focus for nav shortcuts
+                        // • If an input is currently focused, it triggers onBlur → onCommit,
+                        //   which saves the previous value
+                        // useLayoutEffect (not useEffect) then runs synchronously after React
+                        // commits the DOM, focusing the new cell's input before any setTimeout
+                        // callback can race against it — so this never "steals" focus.
+                        containerRef.current?.focus({ preventScroll: true })
+
                         if (e.shiftKey && selectionRef.current) {
-                          // Range extension — focus container for keyboard nav
-                          containerRef.current?.focus({ preventScroll: true })
                           setSelectionEnd({ r: ri, c: ci })
                           return
                         }
 
                         setSelection({ r: ri, c: ci }); setSelectionEnd(null)
 
-                        const canEdit = !col.readonly && col.type !== 'computed' && col.type !== 'toggle'
-                        if (canEdit) {
-                          // Enter edit immediately — useEffect will focus the input after render.
-                          // Do NOT call containerRef.focus() here: it would blur any active editing
-                          // input, trigger its onBlur → onCommit, whose setTimeout then steals focus
-                          // back from the new input.
+                        if (!col.readonly && col.type !== 'computed' && col.type !== 'toggle') {
                           setEditing({ r: ri, c: ci })
-                        } else {
-                          // Non-editable cell — focus container so keyboard shortcuts keep working
-                          containerRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       onMouseEnter={e => {
@@ -1391,6 +1387,7 @@ export function DataGrid<T>({
                         background: isInFillRange && !isFillSource ? '#DBEAFE'
                           : isSelected ? TOK.selectedBg
                           : isInRange ? '#EAF1FB'
+                          : hoveredRow === ri ? (col.sticky ? '#F5F3FF' : '#F8F7FF')
                           : col.sticky ? '#FFFFFF' : undefined,
                         textAlign: (col.align ?? (col.type === 'number' ? 'right' : 'left')) as any,
                         position: col.sticky ? 'sticky' : 'relative',
@@ -1408,17 +1405,10 @@ export function DataGrid<T>({
                             updateCellInRows(ri, ci, v)
                             setEditing(null)
                             setSelection({ r: ri, c: ci })
-                            // Only return focus to container if no OTHER cell becomes editing
-                            // immediately (e.g. user clicked another cell — its useEffect
-                            // will focus that input; we must not race against it).
-                            setTimeout(() => {
-                              if (!editingRef.current) containerRef.current?.focus({ preventScroll: true })
-                            }, 0)
+                            // No setTimeout needed — useLayoutEffect handles focus on next render
                           }, () => {
                             setEditing(null)
-                            setTimeout(() => {
-                              if (!editingRef.current) containerRef.current?.focus({ preventScroll: true })
-                            }, 0)
+                            // No setTimeout needed — useLayoutEffect handles focus on next render
                           }, editInputRef as any)
                         : col.type === 'toggle'
                           ? renderToggle(value, () => {
@@ -1464,14 +1454,19 @@ export function DataGrid<T>({
                   </td>
                 )}
 
-                {/* ── Row actions: always visible, subtle at rest → bold on row hover ── */}
-                <td style={{
-                  ...tdBase,
-                  overflow: 'visible',
-                  width: ACTIONS_COL_W, minWidth: ACTIONS_COL_W,
-                  borderRight: 'none',
-                  background: 'transparent',
-                }}>
+                {/* ── Row actions: always visible. Hovering THIS cell highlights the
+                     whole row. Hovering an individual button highlights only that button. ── */}
+                <td
+                  onMouseEnter={() => setHoveredRow(ri)}
+                  onMouseLeave={() => { if (insertMenuRow !== ri) setHoveredRow(null) }}
+                  style={{
+                    ...tdBase,
+                    overflow: 'visible',
+                    width: ACTIONS_COL_W, minWidth: ACTIONS_COL_W,
+                    borderRight: 'none',
+                    background: hoveredRow === ri ? '#F5F3FF' : 'transparent',
+                    transition: 'background 0.1s',
+                  }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, height: '100%', padding: '0 6px' }}>
                     {/* Insert above / below */}
                     {newRow && (
@@ -1480,7 +1475,9 @@ export function DataGrid<T>({
                           title="Insert row"
                           onMouseDown={e => e.stopPropagation()}
                           onClick={e => { e.stopPropagation(); setInsertMenuRow(insertMenuRow === ri ? null : ri) }}
-                          style={hoveredRow === ri ? rowActBtnHover : rowActBtn}>
+                          onMouseEnter={() => setHoveredBtn(`${ri}-plus`)}
+                          onMouseLeave={() => setHoveredBtn(null)}
+                          style={hoveredBtn === `${ri}-plus` ? rowActBtnHover : rowActBtn}>
                           <Plus size={13} />
                         </button>
                         {insertMenuRow === ri && (
@@ -1513,14 +1510,18 @@ export function DataGrid<T>({
                     <button title="Duplicate row"
                       onMouseDown={e => e.stopPropagation()}
                       onClick={e => { e.stopPropagation(); duplicateRowByIndex(ri) }}
-                      style={hoveredRow === ri ? rowActBtnHover : rowActBtn}>
+                      onMouseEnter={() => setHoveredBtn(`${ri}-copy`)}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      style={hoveredBtn === `${ri}-copy` ? rowActBtnHover : rowActBtn}>
                       <Copy size={13} />
                     </button>
                     {/* Delete */}
                     <button title="Delete row"
                       onMouseDown={e => e.stopPropagation()}
                       onClick={e => { e.stopPropagation(); deleteRowByIndex(ri) }}
-                      style={hoveredRow === ri ? rowActBtnDangerHover : rowActBtnDanger}>
+                      onMouseEnter={() => setHoveredBtn(`${ri}-delete`)}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      style={hoveredBtn === `${ri}-delete` ? rowActBtnDangerHover : rowActBtnDanger}>
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -1563,9 +1564,8 @@ export function DataGrid<T>({
                         if (alreadyEditingThisCell) return
                         containerRef.current?.focus({ preventScroll: true })
                         setSelection({ r: colIdx, c: fieldIdx }); setSelectionEnd(null)
-                        if (!srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle') {
+                        if (!srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle')
                           setEditing({ r: colIdx, c: fieldIdx })
-                        }
                       }}
                       style={{
                         ...tdBase,
@@ -1808,11 +1808,6 @@ function Toolbar({
             {title && <div style={{ fontSize: 14, fontWeight: 800, color: TOK.textOn, letterSpacing: '-0.2px' }}>{title}</div>}
             {description && <div style={{ fontSize: 11.5, color: TOK.textDim, marginTop: 1 }}>{description}</div>}
           </div>
-          {selectionInfo && (
-            <div style={{ fontSize: 11, color: TOK.accent, fontWeight: 600, background: TOK.accentSoft, padding: '4px 10px', borderRadius: 12, border: `1px solid ${TOK.containerBorder}` }}>
-              {selectionInfo}
-            </div>
-          )}
         </div>
       )}
       {/* ── Main toolbar row — always a single line (no wrapping) ── */}
@@ -1941,6 +1936,17 @@ function Toolbar({
           </button>
         )}
 
+        {/* Delete selected rows — always visible, disabled when nothing selected */}
+        {onDeleteRows !== undefined && (
+          <button
+            onClick={onDeleteRows ?? undefined}
+            disabled={!onDeleteRows}
+            style={{ ...btnGhost, color: onDeleteRows ? '#DC2626' : '#CCCCCC', borderColor: onDeleteRows ? '#FEE2E2' : TOK.containerBorder, opacity: onDeleteRows ? 1 : 0.5 }}
+            title="Delete selected rows">
+            <Trash2 size={12} /> Delete
+          </button>
+        )}
+
         {onTranspose && tb.transpose && <button onClick={onTranspose} style={btnGhost}><ArrowUpDown size={12} /> Transpose</button>}
         {(activeFilterCount ?? 0) > 0 && onClearFilters && (
           <button onClick={onClearFilters} style={{ ...btnGhost, color: TOK.accent, borderColor: TOK.accentBg, background: TOK.accentSoft }}>
@@ -1967,18 +1973,7 @@ function Toolbar({
         )}
       </div>
 
-      {/* ── Selection action row — only visible when a cell/range is selected ── */}
-      {selectionInfo && (
-        <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 5, alignItems: 'center', marginTop: 7, paddingTop: 7, borderTop: `1px solid ${TOK.divider}` }}>
-          <span style={{ fontSize: 11, color: TOK.accent, fontWeight: 700, background: TOK.accentSoft, padding: '3px 9px', borderRadius: 10, border: `1px solid ${TOK.containerBorder}`, flexShrink: 0 }}>
-            {selectionInfo}
-          </span>
-          {onBulk && tb.bulkActions && <button onClick={onBulk} style={btnGhost}><RefreshCw size={12} /> Bulk fill</button>}
-          {onFillDown && tb.fillDown && <button onClick={onFillDown} style={btnGhost} title="Fill Down (Ctrl+D)"><ArrowDownToLine size={12} /> Fill ↓</button>}
-          {onDuplicateRows && <button onClick={onDuplicateRows} style={btnGhost}><Copy size={12} /> Duplicate</button>}
-          {onDeleteRows && <button onClick={onDeleteRows} style={{ ...btnGhost, color: '#DC2626', borderColor: '#FEE2E2' }}><Trash2 size={12} /> Delete</button>}
-        </div>
-      )}
+      {/* Selection action row removed — Delete is now in the main toolbar row */}
     </div>
   )
 }
