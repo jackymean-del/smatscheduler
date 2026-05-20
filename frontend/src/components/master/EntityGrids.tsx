@@ -47,9 +47,9 @@ export function ClassesGrid({
 }) {
   const staffOptions = useMemo(() => ['', ...staff.map((s: any) => s.name)], [staff])
   const columns: DataGridColumn<Section>[] = [
-    { key: 'name',  label: 'Section',       type: 'text',   sticky: true, width: 120 },
-    { key: 'grade', label: 'Grade',         type: 'text',   width: 100 },
-    { key: 'room',  label: 'Home Room',     type: 'text',   width: 110 },
+    { key: 'name',  label: 'Section',       type: 'text',   sticky: true, width: 120, placeholder: 'e.g. 10-A' },
+    { key: 'grade', label: 'Grade',         type: 'text',   width: 100,   placeholder: 'e.g. 10' },
+    { key: 'room',  label: 'Home Room',     type: 'text',   width: 110,   placeholder: 'e.g. Room 101' },
     {
       key: 'stream', label: 'Stream', type: 'select', options: STREAMS, width: 130,
       getValue: (r) => (r as any).stream ?? '',
@@ -89,8 +89,8 @@ export function SubjectsGrid({
   onBulkScope?: (rect?: DOMRect) => void
 }) {
   const columns: DataGridColumn<Subject>[] = [
-    { key: 'name',     label: 'Subject',  type: 'text',   sticky: true, width: 200 },
-    { key: 'shortName',label: 'Short',    type: 'text',   width: 90 },
+    { key: 'name',     label: 'Subject',  type: 'text',   sticky: true, width: 200, placeholder: 'e.g. Mathematics' },
+    { key: 'shortName',label: 'Short',    type: 'text',   width: 90,    placeholder: 'e.g. Math' },
     { key: 'category', label: 'Category', type: 'select', options: SUBJECT_CATS, width: 140 },
     {
       key: 'isOptional', label: 'Optional', type: 'toggle', width: 90, align: 'center',
@@ -140,7 +140,7 @@ export function TeachersGrid({
 }) {
   const sectionOptions = useMemo(() => ['', ...sections.map((s: any) => s.name)], [sections])
   const columns: DataGridColumn<Staff>[] = [
-    { key: 'name',   label: 'Teacher', type: 'text',   sticky: true, width: 180 },
+    { key: 'name',   label: 'Teacher', type: 'text',   sticky: true, width: 180, placeholder: 'e.g. John Smith' },
     { key: 'role',   label: 'Role',    type: 'select', options: ROLES, width: 160 },
     { key: 'gender', label: 'Gender',  type: 'select', options: GENDERS, width: 110 },
     {
@@ -182,11 +182,11 @@ export function RoomsGrid({
   onBulkScope?: (rect?: DOMRect) => void
 }) {
   const columns: DataGridColumn<RoomRow>[] = [
-    { key: 'name',     label: 'Room',     type: 'text',   sticky: true, width: 140 },
+    { key: 'name',     label: 'Room',     type: 'text',   sticky: true, width: 140, placeholder: 'e.g. Room 101' },
     { key: 'type',     label: 'Type',     type: 'select', options: ROOM_TYPES, width: 140 },
     { key: 'capacity', label: 'Capacity', type: 'number', width: 100, align: 'right' },
-    { key: 'building', label: 'Building', type: 'text',   width: 140 },
-    { key: 'floor',    label: 'Floor',    type: 'text',   width: 100 },
+    { key: 'building', label: 'Building', type: 'text',   width: 140, placeholder: 'e.g. Main Block' },
+    { key: 'floor',    label: 'Floor',    type: 'text',   width: 100, placeholder: 'e.g. Ground' },
   ]
   return (
     <DataGrid<RoomRow>

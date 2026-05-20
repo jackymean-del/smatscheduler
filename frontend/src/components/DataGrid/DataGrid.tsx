@@ -523,7 +523,7 @@ export function DataGrid<T>({
     return () => window.removeEventListener('keydown', onKey)
   }, [selection, selectionEnd, editing, moveSelection, columns, rows, filteredRows, originalIndex, getCell, setCell, onChange])
 
-  // Focus the edit input when entering edit mode
+  // Focus the edit input when entering edit mode + select-all on first entry
   useEffect(() => {
     if (editing && editInputRef.current) {
       editInputRef.current.focus()
@@ -532,6 +532,19 @@ export function DataGrid<T>({
       }
     }
   }, [editing])
+
+  // Click outside the grid → clear selection & editing (same as Escape)
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setEditing(null)
+        setSelection(null)
+        setSelectionEnd(null)
+      }
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [])
 
   // ── Paste application ────────────────────────────────────
   const applyPaste = useCallback((raw: string, anchor: { r: number; c: number } | null) => {
@@ -1331,17 +1344,19 @@ export function DataGrid<T>({
                   return (
                     <td key={col.key}
                       onMouseDown={e => {
+                        // If we're already editing THIS cell, let the input handle it
+                        // (preserves cursor position on second click, avoids select-all re-trigger)
+                        const alreadyEditingThisCell =
+                          editingRef.current?.r === ri && editingRef.current?.c === ci
+                        if (alreadyEditingThisCell) return
+
                         containerRef.current?.focus({ preventScroll: true })
                         if (e.shiftKey && selectionRef.current) {
                           setSelectionEnd({ r: ri, c: ci })
                         } else {
-                          // Use ref (not state) so value is always current even under React 18 batching
-                          const alreadySelected =
-                            selectionRef.current?.r === ri &&
-                            selectionRef.current?.c === ci &&
-                            !editingRef.current
                           setSelection({ r: ri, c: ci }); setSelectionEnd(null)
-                          if (alreadySelected && !col.readonly && col.type !== 'computed' && col.type !== 'toggle') {
+                          // Enter edit mode immediately on first click (instant, like a normal text field)
+                          if (!col.readonly && col.type !== 'computed' && col.type !== 'toggle') {
                             setEditing({ r: ri, c: ci })
                           }
                         }
@@ -1369,8 +1384,9 @@ export function DataGrid<T>({
                         position: col.sticky ? 'sticky' : 'relative',
                         left: col.sticky ? stickyOffsets[ci] : undefined,
                         zIndex: col.sticky ? 1 : undefined,
-                        cursor: col.readonly || col.type === 'computed' ? 'default' : 'cell',
-                        outline: isInFillRange && !isFillSource ? `1.5px dashed #1D4ED8`
+                        cursor: col.readonly || col.type === 'computed' ? 'default' : 'text',
+                        outline: isEditing ? 'none'
+                          : isInFillRange && !isFillSource ? `1.5px dashed #1D4ED8`
                           : isSelected ? `2px solid ${TOK.selectedBorder}` : 'none',
                         outlineOffset: -1,
                         ...custom,
@@ -1526,13 +1542,12 @@ export function DataGrid<T>({
                   return (
                     <td key={colIdx}
                       onMouseDown={() => {
+                        const alreadyEditingThisCell =
+                          editingRef.current?.r === colIdx && editingRef.current?.c === fieldIdx
+                        if (alreadyEditingThisCell) return
                         containerRef.current?.focus({ preventScroll: true })
-                        const alreadySelected =
-                          selectionRef.current?.r === colIdx &&
-                          selectionRef.current?.c === fieldIdx &&
-                          !editingRef.current
                         setSelection({ r: colIdx, c: fieldIdx }); setSelectionEnd(null)
-                        if (alreadySelected && !srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle') {
+                        if (!srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle') {
                           setEditing({ r: colIdx, c: fieldIdx })
                         }
                       }}
@@ -2011,6 +2026,7 @@ function renderEditor<T>(
       ref={ref as any}
       type={col.type === 'number' ? 'number' : 'text'}
       defaultValue={value == null ? '' : String(value)}
+      placeholder={col.placeholder ?? ''}
       onBlur={e => {
         const raw = (e.target as HTMLInputElement).value
         const v = col.type === 'number' ? (raw === '' ? 0 : parseFloat(raw) || 0) : raw
