@@ -525,9 +525,9 @@ export function DataGrid<T>({
     return () => window.removeEventListener('keydown', onKey)
   }, [selection, selectionEnd, editing, moveSelection, columns, rows, filteredRows, originalIndex, getCell, setCell, onChange])
 
-  // Focus + select-all the edit input immediately after the DOM commits.
-  // useLayoutEffect fires synchronously before browser paint — this guarantees
-  // the input is focused before any setTimeout callbacks can race against it.
+  // Backup focus — autoFocus on the input handles the primary case.
+  // This runs after DOM commit and ensures select-all even if autoFocus
+  // fires without the synthetic onFocus (e.g. some React 18 edge cases).
   useLayoutEffect(() => {
     if (editing && editInputRef.current) {
       editInputRef.current.focus()
@@ -2029,9 +2029,14 @@ function renderEditor<T>(
   onCancel: () => void,
   ref: React.RefObject<HTMLInputElement | HTMLSelectElement>,
 ) {
+  // Fill the entire cell so there are no dead zones the user can click
+  // without hitting the input.
   const commonStyle: React.CSSProperties = {
-    width: '100%', padding: TOK.cellPad, fontSize: TOK.cellFont,
-    border: 'none', outline: `2px solid ${TOK.selectedBorder}`, background: '#fff', color: TOK.textOn,
+    width: '100%', height: '100%',
+    padding: TOK.cellPad, fontSize: TOK.cellFont,
+    border: 'none', outline: `2px solid ${TOK.selectedBorder}`,
+    background: '#fff', color: TOK.textOn,
+    boxSizing: 'border-box' as const,
     textAlign: (col.align ?? (col.type === 'number' ? 'right' : 'left')) as any,
     fontFamily: col.type === 'number' ? "'DM Mono', monospace" : 'inherit',
   }
@@ -2039,6 +2044,7 @@ function renderEditor<T>(
     return (
       <select defaultValue={value ?? ''}
         ref={ref as any}
+        autoFocus
         onChange={e => onCommit(e.target.value)}
         onBlur={e => onCommit(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') onCancel(); if (e.key === 'Enter') onCommit((e.target as HTMLSelectElement).value) }}
@@ -2050,9 +2056,13 @@ function renderEditor<T>(
   return (
     <input
       ref={ref as any}
+      autoFocus
       type={col.type === 'number' ? 'number' : 'text'}
       defaultValue={value == null ? '' : String(value)}
       placeholder={col.placeholder ?? ''}
+      // Select-all when this input gets focus (first click = select all;
+      // second click on same cell = cursor position via native click handling)
+      onFocus={e => e.currentTarget.select()}
       onBlur={e => {
         const raw = (e.target as HTMLInputElement).value
         const v = col.type === 'number' ? (raw === '' ? 0 : parseFloat(raw) || 0) : raw
