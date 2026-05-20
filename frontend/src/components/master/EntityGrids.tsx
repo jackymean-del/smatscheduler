@@ -93,20 +93,14 @@ export function SubjectsGrid({
     { key: 'sessionDuration', label: 'Duration', type: 'number', width: 90, align: 'right' },
     { key: 'maxPeriodsPerDay',label: 'Max/Day', type: 'number', width: 90, align: 'right' },
     {
-      key: 'isOptional', label: 'Optional', type: 'badge', width: 90, align: 'center',
-      getValue: (r) => (r as any).isOptional ? 'Yes' : '—',
-      setValue: (r, v) => ({ ...r, isOptional: v === 'Yes' || v === true } as any),
-      badgeColor: (v) => v === 'Yes'
-        ? { bg: '#FEF3C7', fg: '#92400E', border: '#FDE68A' }
-        : { bg: '#F8F7FF', fg: '#B0B0C0', border: '#ECEAFB' },
+      key: 'isOptional', label: 'Optional', type: 'toggle', width: 80, align: 'center',
+      getValue: (r) => (r as any).isOptional ?? false,
+      setValue: (r, v) => ({ ...r, isOptional: Boolean(v) } as any),
     },
     {
-      key: 'requiresLab', label: 'Lab', type: 'badge', width: 80, align: 'center',
-      getValue: (r) => (r as any).requiresLab ? 'Yes' : '—',
-      setValue: (r, v) => ({ ...r, requiresLab: v === 'Yes' || v === true } as any),
-      badgeColor: (v) => v === 'Yes'
-        ? { bg: '#DBEAFE', fg: '#1E40AF', border: '#BFDBFE' }
-        : { bg: '#F8F7FF', fg: '#B0B0C0', border: '#ECEAFB' },
+      key: 'requiresLab', label: 'Lab', type: 'toggle', width: 70, align: 'center',
+      getValue: (r) => (r as any).requiresLab ?? false,
+      setValue: (r, v) => ({ ...r, requiresLab: Boolean(v) } as any),
     },
   ]
   return (

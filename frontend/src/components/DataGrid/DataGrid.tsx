@@ -42,7 +42,7 @@ import {
 export interface DataGridColumn<T> {
   key: string
   label: string
-  type?: 'text' | 'number' | 'select' | 'computed' | 'badge'
+  type?: 'text' | 'number' | 'select' | 'computed' | 'badge' | 'toggle'
   width?: number | string
   minWidth?: number
   sticky?: boolean
@@ -111,20 +111,20 @@ export interface DataGridProps<T> {
 // Visual tokens
 // ─────────────────────────────────────────────────────────────
 const TOK = {
-  // Container (brand colours for toolbar chrome)
+  // Container
   containerBg: '#FFFFFF',
-  containerBorder: '#ECEAFB',
-  radius: 16,
-  // Excel-exact grid
+  containerBorder: '#E7E7EC',
+  radius: 10,
+  // Grid — standard 34 px rows (compact=30, expanded=40)
   headerBg: '#F2F2F2',
   rowNumBg: '#F2F2F2',
-  headerHeight: 28,
-  headerFont: 12,
+  headerHeight: 34,
+  headerFont: 13,
   headerWeight: 600,
   cellFont: 13,
-  cellPad: '0 8px',      // vertical padding is achieved via fixed row height
-  cellRowH: 28,           // px — matches Excel default
-  divider: '#D0D0D0',    // Excel grid line colour
+  cellPad: '0 8px',
+  cellRowH: 34,
+  divider: '#E2E2E7',    // slightly softer than Excel #D0D0D0
   // Text
   textDim: '#8B87AD',
   textMid: '#555555',
@@ -263,6 +263,13 @@ export function DataGrid<T>({
   const [fillCursor, setFillCursor] = useState<{ x: number; y: number } | null>(null)
   // context-menu (right-click row)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; ri: number } | null>(null)
+
+  // Row hover actions
+  const [hoveredRow, setHoveredRow] = useState<number | null>(null)
+  const [insertMenuRow, setInsertMenuRow] = useState<number | null>(null)
+
+  // Width of the always-present row-actions gutter column
+  const ACTIONS_COL_W = 80
 
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
@@ -424,7 +431,7 @@ export function DataGrid<T>({
       else if (e.key === 'Enter' || e.key === 'F2') {
         e.preventDefault()
         const col = columns[selection.c]
-        if (!col.readonly && col.type !== 'computed') setEditing(selection)
+        if (!col.readonly && col.type !== 'computed' && col.type !== 'toggle') setEditing(selection)
       }
       else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
@@ -1149,7 +1156,9 @@ export function DataGrid<T>({
               {columns.map((col, ci) => (
                 <col key={col.key} style={{ width: computedColWidths[ci] }} />
               ))}
-              {onScope && <col style={{ width: 80 }} />}
+              {onScope && <col style={{ width: 72 }} />}
+              {/* Row hover-actions gutter (always present) */}
+              <col style={{ width: ACTIONS_COL_W }} />
             </colgroup>
           )}
 
@@ -1202,10 +1211,12 @@ export function DataGrid<T>({
                   })}
 
                   {onScope && (
-                    <th style={{ ...thBase, textAlign: 'center' as const, position: 'sticky' as const, top: 0, zIndex: 2 }}>
+                    <th style={{ ...thBase, textAlign: 'center' as const, position: 'sticky' as const, top: 0, zIndex: 2, width: 72 }}>
                       Scope
                     </th>
                   )}
+                  {/* Actions column header — always blank */}
+                  <th style={{ ...thBase, position: 'sticky' as const, top: 0, zIndex: 2, width: ACTIONS_COL_W, borderRight: 'none' }} />
                 </>
               )}
 
@@ -1230,7 +1241,9 @@ export function DataGrid<T>({
             {/* ── Normal rows ── */}
             {!transposed && filteredRows.map((row, ri) => (
               <tr key={rowKey(row)}
-                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}>
+                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}
+                onMouseEnter={() => setHoveredRow(ri)}
+                onMouseLeave={() => { setHoveredRow(null); setInsertMenuRow(null) }}>
 
                 {/* Row number */}
                 <td style={tdRowNum(ri)}>{ri + 1}</td>
@@ -1272,7 +1285,7 @@ export function DataGrid<T>({
                           } else setFillTo({ r: ri, c: ci })
                         } else if (e.buttons === 1 && selection) setSelectionEnd({ r: ri, c: ci })
                       }}
-                      onDoubleClick={() => { if (!col.readonly && col.type !== 'computed') setEditing({ r: ri, c: ci }) }}
+                      onDoubleClick={() => { if (!col.readonly && col.type !== 'computed' && col.type !== 'toggle') setEditing({ r: ri, c: ci }) }}
                       style={{
                         ...tdBase,
                         background: isInFillRange && !isFillSource ? '#DBEAFE'
@@ -1299,6 +1312,12 @@ export function DataGrid<T>({
                             setEditing(null)
                             setTimeout(() => containerRef.current?.focus({ preventScroll: true }), 0)
                           }, editInputRef as any)
+                        : col.type === 'toggle'
+                          ? renderToggle(value, () => {
+                              const cur = getCell(row, col)
+                              updateCellInRows(ri, ci, !cur)
+                              containerRef.current?.focus({ preventScroll: true })
+                            })
                         : col.render
                           ? <div style={{ padding: '0 8px', lineHeight: `${TOK.cellRowH}px` }}>{col.render(value, row, ri)}</div>
                           : col.type === 'badge'
@@ -1328,14 +1347,69 @@ export function DataGrid<T>({
                 })}
 
                 {onScope && (
-                  <td style={{ ...tdBase, textAlign: 'center' as const }}>
+                  <td style={{ ...tdBase, textAlign: 'center' as const, width: 72 }}>
                     <button
                       onClick={e => onScope(row, (e.currentTarget as HTMLElement).getBoundingClientRect())}
-                      style={{ background: TOK.accentSoft, border: `1px solid #DDDAFF`, color: TOK.accent, borderRadius: 5, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' as const }}>
-                      ◎ Scope
+                      style={{ background: TOK.accentSoft, border: `1px solid #DDDAFF`, color: TOK.accent, borderRadius: 5, padding: '2px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' as const }}>
+                      ◉ Scope
                     </button>
                   </td>
                 )}
+
+                {/* ── Row hover-actions: + ⧉ ✕ ── */}
+                <td style={{
+                  ...tdBase,
+                  width: ACTIONS_COL_W, minWidth: ACTIONS_COL_W,
+                  borderRight: 'none',
+                  background: hoveredRow === ri ? '#F8F8FB' : 'transparent',
+                  transition: 'background 0.1s',
+                }}>
+                  {hoveredRow === ri && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, height: '100%', padding: '0 4px' }}>
+                      {/* Insert above/below */}
+                      {newRow && (
+                        <div style={{ position: 'relative' as const }}>
+                          <button
+                            title="Insert row"
+                            onClick={e => { e.stopPropagation(); setInsertMenuRow(insertMenuRow === ri ? null : ri) }}
+                            style={rowActBtn}>+</button>
+                          {insertMenuRow === ri && (
+                            <>
+                              <div style={{ position: 'fixed', inset: 0, zIndex: 3000 }} onClick={() => setInsertMenuRow(null)} />
+                              <div style={{
+                                position: 'absolute' as const, top: '100%', right: 0, marginTop: 3,
+                                background: '#fff', border: `1px solid ${TOK.containerBorder}`,
+                                borderRadius: 7, boxShadow: '0 6px 20px rgba(19,17,30,0.13)',
+                                zIndex: 3001, minWidth: 130, padding: '3px 0', overflow: 'hidden',
+                              }}>
+                                <div role="menuitem" style={rowMenuItemStyle}
+                                  onClick={() => { insertRowAbove(ri); setInsertMenuRow(null) }}
+                                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = TOK.accentSoft}
+                                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                                  Insert above
+                                </div>
+                                <div role="menuitem" style={rowMenuItemStyle}
+                                  onClick={() => { insertRowBelow(ri); setInsertMenuRow(null) }}
+                                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = TOK.accentSoft}
+                                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                                  Insert below
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {/* Duplicate */}
+                      <button title="Duplicate row"
+                        onClick={() => { setSelection({ r: ri, c: 0 }); setSelectionEnd(null); duplicateSelectedRows() }}
+                        style={rowActBtn}>⧉</button>
+                      {/* Delete */}
+                      <button title="Delete row"
+                        onClick={() => { setSelection({ r: ri, c: 0 }); setSelectionEnd(null); deleteSelectedRows() }}
+                        style={{ ...rowActBtn, color: '#DC2626' }}>✕</button>
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
 
@@ -1467,6 +1541,27 @@ export function DataGrid<T>({
             {newRow && <CtxMenuItem icon={<Plus size={12}/>} label="Insert row below" onClick={() => { insertRowBelow(ctxMenu.ri); setCtxMenu(null) }} />}
             {newRow && <CtxDivider />}
             <CtxMenuItem icon={<Copy size={12}/>} label="Duplicate row" onClick={() => { setSelection({ r: ctxMenu.ri, c: 0 }); setSelectionEnd(null); duplicateSelectedRows(); setCtxMenu(null) }} />
+            <CtxDivider />
+            <CtxMenuItem icon={<Copy size={12}/>} label="Copy" onClick={() => {
+              const r = ctxMenu.ri
+              const parts = columns.map(c => { const v = getCell(filteredRows[r], c); return v == null ? '' : String(v) })
+              navigator.clipboard?.writeText(parts.join('\t')).catch(() => {})
+              setCtxMenu(null)
+            }} />
+            <CtxMenuItem icon={<ClipboardPaste size={12}/>} label="Paste" onClick={() => {
+              navigator.clipboard?.readText().then(txt => { if (txt.trim()) applyPaste(txt, { r: ctxMenu.ri, c: 0 }) }).catch(() => setPasteOpen(true))
+              setCtxMenu(null)
+            }} />
+            <CtxMenuItem icon={<ArrowDownToLine size={12}/>} label="Fill down" onClick={() => {
+              setSelection({ r: ctxMenu.ri, c: 0 }); setSelectionEnd(null); applyFillDown(); setCtxMenu(null)
+            }} />
+            <CtxMenuItem icon={<X size={12}/>} label="Clear cells" onClick={() => {
+              const r = ctxMenu.ri; const origR = originalIndex(r); if (origR < 0) { setCtxMenu(null); return }
+              let next = rows.slice()
+              columns.forEach((col, _ci) => { if (!col.readonly && col.type !== 'computed') next[origR] = setCell(next[origR], col, col.type === 'number' ? 0 : '') })
+              onChange(next); setCtxMenu(null)
+            }} />
+            <CtxDivider />
             <CtxMenuItem icon={<Trash2 size={12}/>} label="Delete row" onClick={() => { setSelection({ r: ctxMenu.ri, c: 0 }); setSelectionEnd(null); deleteSelectedRows(); setCtxMenu(null) }} danger />
           </div>
         </>
@@ -1508,6 +1603,18 @@ const btnGhost: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
   padding: '6px 11px', borderRadius: 7, border: `1px solid ${TOK.containerBorder}`,
   background: '#fff', color: TOK.textMid, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+}
+// Row-level hover action buttons (+ ⧉ ✕)
+const rowActBtn: React.CSSProperties = {
+  width: 22, height: 22, padding: 0, border: `1px solid ${TOK.containerBorder}`,
+  borderRadius: 5, background: '#fff', color: TOK.textMid,
+  fontSize: 13, fontWeight: 700, cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  lineHeight: 1, flexShrink: 0,
+}
+const rowMenuItemStyle: React.CSSProperties = {
+  padding: '6px 12px', fontSize: 12, cursor: 'pointer',
+  color: TOK.textOn, userSelect: 'none' as const,
 }
 
 interface ToolbarProps {
@@ -1802,6 +1909,35 @@ function renderEditor<T>(
       }}
       style={commonStyle}
     />
+  )
+}
+
+function renderToggle(value: any, onToggle: () => void) {
+  const on = Boolean(value)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '0 8px' }}>
+      <button
+        onClick={e => { e.stopPropagation(); onToggle() }}
+        title={on ? 'On — click to toggle' : 'Off — click to toggle'}
+        style={{
+          width: 34, height: 18, borderRadius: 9,
+          background: on ? TOK.accent : '#D1D5DB',
+          border: 'none', cursor: 'pointer',
+          position: 'relative' as const, padding: 0, flexShrink: 0,
+          transition: 'background 0.15s',
+          outline: 'none',
+        }}>
+        <span style={{
+          position: 'absolute' as const,
+          top: 2, left: on ? 16 : 2,
+          width: 14, height: 14, borderRadius: '50%',
+          background: '#fff',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.22)',
+          transition: 'left 0.15s',
+          display: 'block',
+        }} />
+      </button>
+    </div>
   )
 }
 
