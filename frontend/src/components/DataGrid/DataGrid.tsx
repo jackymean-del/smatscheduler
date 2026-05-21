@@ -1354,19 +1354,17 @@ export function DataGrid<T>({
                     <td key={col.key}
                       onMouseDown={e => {
                         // Already editing THIS cell — let the native input handle the click
-                        // (preserves cursor position; avoids re-triggering select-all)
+                        // so the cursor can be repositioned by the browser normally.
                         const alreadyEditingThisCell =
                           editingRef.current?.r === ri && editingRef.current?.c === ci
                         if (alreadyEditingThisCell) return
 
-                        // containerRef.focus() is intentional:
-                        // • Gives the container keyboard focus for nav shortcuts
-                        // • If an input is currently focused, it triggers onBlur → onCommit,
-                        //   which saves the previous value
-                        // useLayoutEffect (not useEffect) then runs synchronously after React
-                        // commits the DOM, focusing the new cell's input before any setTimeout
-                        // callback can race against it — so this never "steals" focus.
-                        containerRef.current?.focus({ preventScroll: true })
+                        // Explicitly blur the active input BEFORE issuing any setState.
+                        // This fires onBlur → onCommit synchronously, inside the same
+                        // React 18 batch as the setState calls below, so setEditing(null)
+                        // from the old cell's onBlur is batched with setEditing({r,c}) here
+                        // and the last write wins — no race, no focus-stealing.
+                        editInputRef.current?.blur()
 
                         if (e.shiftKey && selectionRef.current) {
                           setSelectionEnd({ r: ri, c: ci })
@@ -1376,7 +1374,13 @@ export function DataGrid<T>({
                         setSelection({ r: ri, c: ci }); setSelectionEnd(null)
 
                         if (!col.readonly && col.type !== 'computed' && col.type !== 'toggle') {
+                          // Editable cell: setEditInputNode callback ref will focus the
+                          // input the moment React mounts it — no containerRef.focus() needed.
                           setEditing({ r: ri, c: ci })
+                        } else {
+                          // Non-editable cell: hand keyboard focus to the container so
+                          // arrow-key / Enter navigation still works.
+                          containerRef.current?.focus({ preventScroll: true })
                         }
                       }}
                       onMouseEnter={e => {
@@ -1570,10 +1574,12 @@ export function DataGrid<T>({
                         const alreadyEditingThisCell =
                           editingRef.current?.r === colIdx && editingRef.current?.c === fieldIdx
                         if (alreadyEditingThisCell) return
-                        containerRef.current?.focus({ preventScroll: true })
+                        editInputRef.current?.blur()
                         setSelection({ r: colIdx, c: fieldIdx }); setSelectionEnd(null)
                         if (!srcCol.readonly && srcCol.type !== 'computed' && srcCol.type !== 'toggle')
                           setEditing({ r: colIdx, c: fieldIdx })
+                        else
+                          containerRef.current?.focus({ preventScroll: true })
                       }}
                       style={{
                         ...tdBase,
