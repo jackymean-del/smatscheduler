@@ -1347,7 +1347,7 @@ export function DataGrid<T>({
                     transition: 'background 0.12s ease',
                     background: selection?.r === ri && selectionEnd?.c === columns.length - 1
                       ? '#C7C0FF'
-                      : hoveredRow === ri
+                      : (hoveredRow === ri || ctxMenu?.ri === ri)
                         ? '#DDD9FF'
                         : undefined,
                   }}
@@ -1437,7 +1437,7 @@ export function DataGrid<T>({
                         background: isInFillRange && !isFillSource ? '#DBEAFE'
                           : isSelected ? TOK.selectedBg
                           : isInRange ? '#EAF1FB'
-                          : hoveredRow === ri ? (col.sticky ? '#F0EEFF' : '#F5F3FF')
+                          : (hoveredRow === ri || ctxMenu?.ri === ri) ? (col.sticky ? '#F0EEFF' : '#F5F3FF')
                           : hoveredCell?.r === ri && hoveredCell?.c === ci ? (col.sticky ? '#F5F4FF' : '#F8F7FF')
                           : col.sticky ? '#FFFFFF' : undefined,
                         textAlign: (col.align ?? (col.type === 'number' ? 'right' : 'left')) as any,
