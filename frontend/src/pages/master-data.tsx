@@ -146,10 +146,10 @@ export function MasterDataPage() {
         </div>
 
         {/* Tab content */}
-        {tab === 'classes'   && <ClassesGrid  sections={sections}  setSections={setSections}  staff={staff} onScope={(s) => setScopeTarget({ kind: 'Section', entity: s })} />}
-        {tab === 'subjects'  && <SubjectsGrid subjects={subjects}  setSubjects={setSubjects}                onScope={(s) => setScopeTarget({ kind: 'Subject', entity: s })} />}
-        {tab === 'teachers'  && <TeachersGrid staff={staff}        setStaff={setStaff}        sections={sections} onScope={(t) => setScopeTarget({ kind: 'Teacher', entity: t })} />}
-        {tab === 'rooms'     && <RoomsGrid    rooms={rooms}        setRooms={setRooms}                       onScope={(r) => setScopeTarget({ kind: 'Room', entity: r })} />}
+        {tab === 'classes'   && <ClassesGrid  sections={sections}  setSections={setSections}  staff={staff} onScope={(s) => setScopeTarget({ kind: 'Section', entity: s })} onBulkScope={() => setScopeTarget({ kind: 'BulkSection', entity: { id: '__bulk__', name: 'All Classes' } })} />}
+        {tab === 'subjects'  && <SubjectsGrid subjects={subjects}  setSubjects={setSubjects}                onScope={(s) => setScopeTarget({ kind: 'Subject', entity: s })} onBulkScope={() => setScopeTarget({ kind: 'BulkSubject', entity: { id: '__bulk__', name: 'All Subjects' } })} />}
+        {tab === 'teachers'  && <TeachersGrid staff={staff}        setStaff={setStaff}        sections={sections} onScope={(t) => setScopeTarget({ kind: 'Teacher', entity: t })} onBulkScope={() => setScopeTarget({ kind: 'BulkTeacher', entity: { id: '__bulk__', name: 'All Teachers' } })} />}
+        {tab === 'rooms'     && <RoomsGrid    rooms={rooms}        setRooms={setRooms}                       onScope={(r) => setScopeTarget({ kind: 'Room', entity: r })} onBulkScope={() => setScopeTarget({ kind: 'BulkRoom', entity: { id: '__bulk__', name: 'All Rooms' } })} />}
         {tab === 'strengths' && <StrengthsGrid sections={sections} subjects={subjects} sectionStrengths={sectionStrengths ?? []} setSectionStrengths={setSectionStrengths} />}
 
       </div>
@@ -158,21 +158,39 @@ export function MasterDataPage() {
       {scopeTarget && (
         <ScopeMatrixModal
           entityName={scopeTarget.entity.name ?? scopeTarget.entity.actualName ?? '—'}
-          entityKind={scopeTarget.kind}
+          entityKind={scopeTarget.kind.replace('Bulk', '')}
           scope={scopeTarget.entity.scope}
           workDays={workDays}
           periods={periods}
-          onSave={(nextScope: ScopeMatrix | undefined) => {
+          entities={
+            scopeTarget.kind === 'BulkSection' ? sections.map((s: Section) => ({ id: s.id, name: s.name }))
+            : scopeTarget.kind === 'BulkSubject' ? subjects.map((s: Subject) => ({ id: s.id, name: s.name }))
+            : scopeTarget.kind === 'BulkTeacher' ? staff.map((t: Staff) => ({ id: t.id, name: t.name }))
+            : scopeTarget.kind === 'BulkRoom'    ? rooms.map(r => ({ id: r.id, name: r.name }))
+            : undefined
+          }
+          onSave={(nextScope: ScopeMatrix | undefined, selectedIds?: string[]) => {
             const k = scopeTarget.kind
-            if (k === 'Section') {
+            if (k === 'Section')
               setSections(sections.map((s: Section) => s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
-            } else if (k === 'Subject') {
+            else if (k === 'Subject')
               setSubjects(subjects.map((s: Subject) => s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
-            } else if (k === 'Teacher') {
+            else if (k === 'Teacher')
               setStaff(staff.map((t: Staff) => t.id === scopeTarget.entity.id ? { ...t, scope: nextScope } : t))
-            } else if (k === 'Room') {
+            else if (k === 'Room')
               setRooms(rooms.map(r => r.id === scopeTarget.entity.id ? { ...r, scope: nextScope } : r))
-            }
+            else if (k === 'BulkSection')
+              setSections(sections.map((s: Section) =>
+                (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
+            else if (k === 'BulkSubject')
+              setSubjects(subjects.map((s: Subject) =>
+                (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
+            else if (k === 'BulkTeacher')
+              setStaff(staff.map((t: Staff) =>
+                (!selectedIds || selectedIds.includes(t.id)) ? { ...t, scope: nextScope } : t))
+            else if (k === 'BulkRoom')
+              setRooms(rooms.map(r =>
+                (!selectedIds || selectedIds.includes(r.id)) ? { ...r, scope: nextScope } : r))
           }}
           onClose={() => setScopeTarget(null)}
         />

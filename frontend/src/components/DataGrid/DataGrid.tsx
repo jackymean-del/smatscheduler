@@ -271,8 +271,8 @@ export function DataGrid<T>({
   >(null)
   // v3.2: cursor position for drag-fill preview tooltip
   const [fillCursor, setFillCursor] = useState<{ x: number; y: number } | null>(null)
-  // context-menu (right-click row)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; ri: number } | null>(null)
+  // context-menu (right-click row) — rowTop/rowBottom anchor to the row's rect, not cursor
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; rowTop: number; rowBottom: number; ri: number } | null>(null)
 
   // Row hover — only set when hovering the ACTIONS column cell (not the whole row)
   const [hoveredRow, setHoveredRow] = useState<number | null>(null)
@@ -1331,7 +1331,11 @@ export function DataGrid<T>({
               // key=ri (index) → React updates in-place instead of unmount/remount on delete,
               // which prevents the hover-buttons flicker.
               <tr key={ri}
-                onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, ri }) }}>
+                onContextMenu={e => {
+                  e.preventDefault()
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  setCtxMenu({ x: e.clientX, rowTop: rect.top, rowBottom: rect.bottom, ri })
+                }}>
 
                 {/* Row number */}
                 <td style={tdRowNum(ri)}>{ri + 1}</td>
@@ -1709,9 +1713,14 @@ export function DataGrid<T>({
           <div style={{
             position: 'fixed',
             left: Math.min(ctxMenu.x, window.innerWidth - 186),
-            top: ctxMenu.y + 340 > window.innerHeight
-              ? Math.max(4, ctxMenu.y - 340)
-              : ctxMenu.y,
+            // Opens downward from the top of the row; if that would clip below
+            // the viewport, flip upward so the menu ends at the row's bottom edge.
+            top: (() => {
+              const menuH = 340
+              return ctxMenu.rowTop + menuH > window.innerHeight
+                ? Math.max(4, ctxMenu.rowBottom - menuH)
+                : ctxMenu.rowTop
+            })(),
             zIndex: 1999,
             background: '#fff',
             border: '1px solid #ECEAFB',

@@ -451,13 +451,21 @@ export function StepResourcesV2() {
         {scopeTarget && (
           <ScopeMatrixModal
             entityName={scopeTarget.entity.name ?? scopeTarget.entity.actualName ?? '—'}
-            entityKind={scopeTarget.kind}
+            entityKind={scopeTarget.kind.replace('Bulk', '')}
             scope={scopeTarget.entity.scope}
             workDays={workDays}
             periods={periods}
             cycleWeeks={cycleWeeks}
             anchorRect={scopeTarget.rect}
-            onSave={(nextScope) => {
+            // Bulk mode: pass the full entity list so the picker is shown
+            entities={
+              scopeTarget.kind === 'BulkSection' ? sections.map((s: Section) => ({ id: s.id, name: s.name }))
+              : scopeTarget.kind === 'BulkSubject' ? subjects.map((s: Subject) => ({ id: s.id, name: s.name }))
+              : scopeTarget.kind === 'BulkTeacher' ? staff.map((t: Staff) => ({ id: t.id, name: t.name }))
+              : scopeTarget.kind === 'BulkRoom'    ? rooms.map(r => ({ id: r.id, name: r.name }))
+              : undefined
+            }
+            onSave={(nextScope, selectedIds) => {
               const k = scopeTarget.kind
               // Single-entity scope
               if (k === 'Section')
@@ -472,15 +480,19 @@ export function StepResourcesV2() {
               else if (k === 'Room')
                 setRooms(rooms.map(r =>
                   r.id === scopeTarget.entity.id ? { ...r, scope: nextScope } : r))
-              // Bulk scope — applies the same matrix to every entity in the tab
+              // Bulk scope — applies to selected subset (or all if selectedIds undefined)
               else if (k === 'BulkSection')
-                setSections(sections.map((s: Section) => ({ ...s, scope: nextScope })))
+                setSections(sections.map((s: Section) =>
+                  (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
               else if (k === 'BulkSubject')
-                setSubjects(subjects.map((s: Subject) => ({ ...s, scope: nextScope })))
+                setSubjects(subjects.map((s: Subject) =>
+                  (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
               else if (k === 'BulkTeacher')
-                setStaff(staff.map((t: Staff) => ({ ...t, scope: nextScope })))
+                setStaff(staff.map((t: Staff) =>
+                  (!selectedIds || selectedIds.includes(t.id)) ? { ...t, scope: nextScope } : t))
               else if (k === 'BulkRoom')
-                setRooms(rooms.map(r => ({ ...r, scope: nextScope })))
+                setRooms(rooms.map(r =>
+                  (!selectedIds || selectedIds.includes(r.id)) ? { ...r, scope: nextScope } : r))
             }}
             onClose={() => setScopeTarget(null)}
           />

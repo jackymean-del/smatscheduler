@@ -18,9 +18,9 @@
  * to cycle entire period across all days, "All allowed" / "Reset" buttons.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { ScopeMatrix, ScopeState, Period } from '@/types'
-import { X, Check, Lock, Ban, RotateCcw, Info } from 'lucide-react'
+import { X, Check, Lock, Ban, RotateCcw, Info, ChevronDown } from 'lucide-react'
 
 const DAY_LABEL: Record<string, string> = {
   MONDAY: 'Mon', TUESDAY: 'Tue', WEDNESDAY: 'Wed',
@@ -62,15 +62,25 @@ interface Props {
    * instead of a full-screen backdrop modal.
    */
   anchorRect?: DOMRect | null
-  /** Save handler */
-  onSave: (next: ScopeMatrix | undefined) => void
+  /**
+   * Bulk mode: list of selectable resources. When provided, a resource picker
+   * appears so users can choose which subset gets the scope applied.
+   * If omitted, the modal operates on a single entity.
+   */
+  entities?: Array<{ id: string; name: string }>
+  /**
+   * Save handler.
+   * selectedIds is only populated when `entities` is provided (bulk mode).
+   * undefined selectedIds means "apply to all".
+   */
+  onSave: (next: ScopeMatrix | undefined, selectedIds?: string[]) => void
   /** Cancel/close */
   onClose: () => void
 }
 
 export function ScopeMatrixModal({
   entityName, entityKind = 'Entity', scope, workDays, periods,
-  cycleWeeks = 1, anchorRect, onSave, onClose,
+  cycleWeeks = 1, anchorRect, entities, onSave, onClose,
 }: Props) {
   const classPeriods = periods.filter(p => p.type === 'class' || !p.type)
   const visibleDays = workDays.filter(d => DAY_LABEL[d])
@@ -105,10 +115,32 @@ export function ScopeMatrixModal({
   })
   const [note, setNote] = useState(scope?.note ?? '')
 
+  // Multi-resource picker state (bulk mode only)
+  const allIds = entities?.map(e => e.id) ?? []
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(allIds))
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     setCells(JSON.parse(JSON.stringify(scope?.cells ?? {})))
     setNote(scope?.note ?? '')
   }, [scope])
+
+  // Re-init selectedIds when entities list changes (e.g. modal re-opened)
+  useEffect(() => {
+    setSelectedIds(new Set(allIds))
+  }, [entities?.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!pickerOpen) return
+    const handle = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node))
+        setPickerOpen(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [pickerOpen])
 
   // Helpers
   const getState = (day: string, periodId: string): ScopeState =>
@@ -181,10 +213,15 @@ export function ScopeMatrixModal({
   // Save: collapse to undefined if all cells are allowed and no note
   const handleSave = () => {
     const anyConstraints = Object.keys(cells).length > 0
-    if (!anyConstraints && !note.trim()) {
-      onSave(undefined)  // fully unscoped — strip the matrix
+    const nextScope = (!anyConstraints && !note.trim())
+      ? undefined
+      : { cells, note: note.trim() || undefined }
+    // Bulk mode: pass selected IDs (undefined = all, array = specific subset)
+    if (entities) {
+      const isAll = selectedIds.size === entities.length
+      onSave(nextScope, isAll ? undefined : Array.from(selectedIds))
     } else {
-      onSave({ cells, note: note.trim() || undefined })
+      onSave(nextScope)
     }
     onClose()
   }
@@ -254,6 +291,80 @@ export function ScopeMatrixModal({
               <StatPill label="Locked"   count={lockedCount}   state="locked" />
             </div>
           </div>
+
+          {/* ── Resource picker (bulk mode only) ─────────────────────── */}
+          {entities && entities.length > 0 && (
+            <div ref={pickerRef} style={{ marginBottom: 14, position: 'relative' as const }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: '#8B87AD', marginBottom: 5 }}>
+                Apply to
+              </div>
+              <button
+                onClick={() => setPickerOpen(v => !v)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  width: '100%', padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid #ECEAFB', background: '#FAFAFE',
+                  cursor: 'pointer', fontSize: 12, color: '#13111E', fontWeight: 500,
+                  textAlign: 'left' as const,
+                }}>
+                <span style={{ flex: 1 }}>
+                  {selectedIds.size === 0
+                    ? <span style={{ color: '#DC2626' }}>None selected</span>
+                    : selectedIds.size === entities.length
+                      ? <span style={{ color: '#15803D' }}>All {entities.length} {entityKind.toLowerCase()}s</span>
+                      : <>{selectedIds.size} of {entities.length} selected</>
+                  }
+                </span>
+                <ChevronDown size={13} style={{ transform: pickerOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: '#8B87AD', flexShrink: 0 }} />
+              </button>
+
+              {pickerOpen && (
+                <div style={{
+                  position: 'absolute' as const, top: '100%', left: 0, right: 0, zIndex: 100,
+                  background: '#fff', border: '1px solid #ECEAFB', borderRadius: 10,
+                  boxShadow: '0 8px 24px rgba(19,17,30,0.12)', marginTop: 4,
+                  maxHeight: 220, overflowY: 'auto' as const,
+                }}>
+                  {/* Select all / none */}
+                  <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #F0EEF8', padding: '6px 10px' }}>
+                    <button onClick={() => setSelectedIds(new Set(allIds))}
+                      style={{ fontSize: 11, fontWeight: 700, color: '#7C6FE0', border: 'none', background: 'none', cursor: 'pointer', padding: '2px 6px' }}>
+                      Select all
+                    </button>
+                    <span style={{ color: '#D0CDE8', alignSelf: 'center' }}>·</span>
+                    <button onClick={() => setSelectedIds(new Set())}
+                      style={{ fontSize: 11, fontWeight: 700, color: '#8B87AD', border: 'none', background: 'none', cursor: 'pointer', padding: '2px 6px' }}>
+                      Deselect all
+                    </button>
+                  </div>
+                  {/* Entity checkboxes */}
+                  {entities.map(ent => (
+                    <label key={ent.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '7px 12px', cursor: 'pointer', fontSize: 12.5,
+                      color: '#13111E', borderBottom: '1px solid #F8F7FF',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#F8F7FF')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(ent.id)}
+                        onChange={e => {
+                          setSelectedIds(prev => {
+                            const next = new Set(prev)
+                            e.target.checked ? next.add(ent.id) : next.delete(ent.id)
+                            return next
+                          })
+                        }}
+                        style={{ accentColor: '#7C6FE0', width: 14, height: 14 }}
+                      />
+                      {ent.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Matrix table */}
           <div style={{

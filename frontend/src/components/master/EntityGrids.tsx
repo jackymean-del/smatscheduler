@@ -193,10 +193,11 @@ export function ClassesGrid({
     { key: 'room',  label: 'Home Room', type: 'text', width: 110, placeholder: 'e.g. Room 101' },
     {
       key: 'stream', label: 'Stream', type: 'select', options: STREAMS, width: 130,
+      placeholder: 'Optional',
       getValue: (r) => (r as any).stream ?? '',
       setValue: (r, v) => ({ ...r, stream: v }) as any,
     },
-    { key: 'classTeacher', label: 'Class Teacher', type: 'select', options: staffOptions, width: 180 },
+    { key: 'classTeacher', label: 'Class Teacher', type: 'select', options: staffOptions, width: 180, placeholder: 'Assign...' },
   ]
   return (
     <DataGrid<Section>
@@ -304,10 +305,11 @@ export function TeachersGrid({
   const sectionOptions = useMemo(() => ['', ...sections.map((s: any) => s.name)], [sections])
   const columns: DataGridColumn<Staff>[] = [
     { key: 'name',   label: 'Teacher', type: 'text',   sticky: true, width: 180, placeholder: 'e.g. John Smith' },
-    { key: 'role',   label: 'Role',    type: 'select', options: ROLES, width: 160 },
-    { key: 'gender', label: 'Gender',  type: 'select', options: GENDERS, width: 110 },
+    { key: 'role',   label: 'Role',    type: 'select', options: ROLES,    width: 160, placeholder: 'Select role' },
+    { key: 'gender', label: 'Gender',  type: 'select', options: GENDERS,  width: 110, placeholder: 'Select' },
     {
       key: 'isClassTeacher', label: 'Class Teacher of', type: 'select', options: sectionOptions, width: 160,
+      placeholder: 'None',
       getValue: (r) => r.isClassTeacher ?? '',
       setValue: (r, v) => ({ ...r, isClassTeacher: v ?? '' }),
     },
