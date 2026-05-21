@@ -164,7 +164,8 @@ export function StepAllocation() {
         let allocated = 0
         ideal.forEach((s, i) => {
           const isLast = i === ideal.length - 1
-          const raw = isLast ? Math.max(0, capacity - allocated) : Math.max(1, Math.round(s.pw * scale))
+          // Math.floor guarantees partial allocation never rounds over capacity
+          const raw = isLast ? Math.max(0, capacity - allocated) : Math.max(1, Math.floor(s.pw * scale))
           if (raw > 0) row[s.name] = String(raw)
           allocated += raw
         })

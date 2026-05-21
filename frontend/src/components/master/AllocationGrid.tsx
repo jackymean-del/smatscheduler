@@ -1,37 +1,27 @@
 /**
  * AllocationGrid — Class × Subject period allocation matrix.
  *
- * Each cell holds a compact allocation syntax string:
- *   "5"   "5+1"   "3(2X)"   "2L"   "6T"
+ * Subject cells use NO col.render — only getValue/setValue/cellStyle.
+ * This guarantees every cell is always clickable/editable via DataGrid's
+ * native interaction path (no invisible overlay, no pointer-event issues).
  *
- * Live features:
- *   - Compact cells with pointerEvents:none on all inner content (so every
- *     click reaches the <td> and triggers the editor correctly)
- *   - Same-grade auto-fill: editing one section propagates to all sections
- *     of the same grade prefix (e.g. editing "Nursery-A" fills "Nursery-B/C…")
- *   - "0" stored value = not applicable → shown as empty placeholder
- *   - Per-row "Used / Cap" badge with utilisation bar
- *   - AI Suggest fills conflict-free defaults (scales to capacity)
- *   - Period / Hours display toggle via displayMode prop
+ * Auto-fills conflict-free values on mount (or whenever conflicts exist).
+ * Same-grade sections sync automatically when one is edited.
  */
 
 import { useMemo, useEffect } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import type { Subject, Section, Period } from '@/types'
 import { DataGrid, DataGridColumn } from '@/components/DataGrid/DataGrid'
+import { parseAllocation, validateAllocationCapacity } from '@/lib/allocationSyntax'
 import {
-  parseAllocation, validateAllocationCapacity,
-} from '@/lib/allocationSyntax'
-import {
-  computeCapacity, capacityForSection, inferBandFromSection,
-  utilisationStatus,
+  computeCapacity, capacityForSection, inferBandFromSection, utilisationStatus,
 } from '@/lib/capacityEngine'
 import { Grid3x3 } from 'lucide-react'
 
 interface Props {
   displayMode?: 'periods' | 'hours'
   periodMinutes?: number
-  /** Extra controls injected into the DataGrid toolbar (left side, before Import/Export) */
   toolbarExtra?: React.ReactNode
 }
 
@@ -50,9 +40,10 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string; border: string; lab
   over:   { bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA', label: 'Over'  },
 }
 
-/** Extract the grade prefix from a section name like "Nursery-A" → "Nursery" */
-function gradeOf(sectionName: string): string {
-  return sectionName.split('-')[0].trim()
+/** Extract grade prefix: "Nursery-A" → "Nursery", "Class-1-A" → "Class-1" */
+function gradeOf(name: string): string {
+  const parts = name.split('-')
+  return parts.length > 1 ? parts.slice(0, -1).join('-') : name
 }
 
 export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, toolbarExtra }: Props) {
@@ -63,15 +54,14 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
 
   const cap = useMemo(() => computeCapacity(workDays, periods), [workDays, periods])
 
-  // Per-section row total — skip "0" (not-applicable) and empty
+  // Per-section row totals — "0" = not applicable, skip
   const rowTotals = useMemo(() => {
     const m: Record<string, number> = {}
-    sections.forEach((sec: Section) => {
+    ;(sections as Section[]).forEach((sec: Section) => {
       const row = subjectAllocations[sec.name] ?? {}
       let total = 0
-      subjects.forEach((sub: Subject) => {
+      ;(subjects as Subject[]).forEach((sub: Subject) => {
         const raw = row[sub.name]
-        // "0" = not applicable, skip; also skip missing
         if (!raw || raw === '0') return
         const parsed = parseAllocation(raw)
         if (parsed.valid) total += parsed.weeklyTotal
@@ -81,11 +71,71 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
     return m
   }, [sections, subjects, subjectAllocations])
 
+  // ── Capacity-aware AI fill (uses Math.floor to guarantee no OVER) ──
+  const handleAISuggest = () => {
+    const next: Record<string, Record<string, string>> = {}
+
+    ;(sections as Section[]).forEach((sec: Section) => {
+      const band = inferBandFromSection(sec.name)
+      const capacity = capacityForSection(cap, band)
+
+      const ideal = (subjects as Subject[])
+        .filter(s => s.periodsPerWeek && s.periodsPerWeek > 0)
+        .map(s => ({ name: s.name, pw: s.periodsPerWeek!, isLab: !!(s as any).requiresLab }))
+
+      if (!ideal.length) return
+
+      const totalIdeal = ideal.reduce((a, s) => a + s.pw, 0)
+      const row: Record<string, string> = {}
+
+      if (capacity <= 0 || totalIdeal <= capacity) {
+        // Everything fits — use as-is with lab syntax
+        ideal.forEach(s => {
+          row[s.name] = s.isLab ? `${Math.max(1, s.pw - 1)}+1L` : String(s.pw)
+        })
+      } else {
+        // Scale down with Math.floor to guarantee total ≤ capacity
+        // Last subject absorbs the remainder so total == capacity exactly
+        const scale = capacity / totalIdeal
+        let allocated = 0
+        ideal.forEach((s, i) => {
+          const isLast = i === ideal.length - 1
+          const raw = isLast
+            ? Math.max(0, capacity - allocated)
+            : Math.max(1, Math.floor(s.pw * scale))   // floor = never over-cap
+          if (raw > 0) row[s.name] = String(raw)
+          allocated += raw
+        })
+      }
+
+      if (Object.keys(row).length) next[sec.name] = row
+    })
+
+    store.setSubjectAllocations?.(next)
+  }
+
+  // Auto-run on mount: fill when empty or when any section is over capacity
+  useEffect(() => {
+    const hasConflicts = (sections as Section[]).some((sec: Section) => {
+      const band = inferBandFromSection(sec.name)
+      const c = capacityForSection(cap, band)
+      const u = rowTotals[sec.name] ?? 0
+      return c > 0 && u > c
+    })
+    const hasAny = Object.values(subjectAllocations ?? {}).some(
+      (row: any) => Object.values(row ?? {}).some(
+        (v: any) => v && String(v).trim() !== '' && v !== '0'
+      )
+    )
+    if (!hasAny || hasConflicts) handleAISuggest()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Build rows
-  const rows: Row[] = useMemo(() => sections.map((sec: any) => ({
+  const rows: Row[] = useMemo(() => (sections as Section[]).map((sec: any) => ({
     sectionName: sec.name,
     grade: sec.grade,
-    stream: (sec as any).stream,
+    stream: sec.stream,
     __sectionId: sec.id,
   })), [sections])
 
@@ -97,7 +147,8 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
         sticky: true, width: 110, readonly: true,
       },
       {
-        key: '__usage', label: 'Used / Cap', type: 'computed', width: 128, readonly: true,
+        // "Used / Cap" utilisation column — computed, read-only, keeps render (no editing)
+        key: '__usage', label: 'Used / Cap', type: 'computed', width: 130, readonly: true,
         format: (row) => {
           const band = inferBandFromSection(row.sectionName)
           const c = capacityForSection(cap, band)
@@ -117,17 +168,12 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
           const uLabel = displayMode === 'hours' ? `${Math.round(u * periodMinutes / 60 * 10) / 10}h` : String(u)
           const cLabel = displayMode === 'hours' ? `${Math.round(c * periodMinutes / 60 * 10) / 10}h` : String(c)
           return (
-            // pointerEvents:none so all mouse events fall through to the <td>
             <div style={{ padding: '4px 8px', minWidth: 90, pointerEvents: 'none' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, marginBottom: 2 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: '#13111E', fontFamily: "'DM Mono', monospace", letterSpacing: '-0.3px' }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#13111E', fontFamily: "'DM Mono', monospace" }}>
                   {uLabel} / {cLabel}
                 </span>
-                <span style={{
-                  fontSize: 8, fontWeight: 800, letterSpacing: '0.03em',
-                  padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' as const,
-                  background: s.bg, color: s.fg, border: `1px solid ${s.border}`,
-                }}>
+                <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 4, whiteSpace: 'nowrap' as const, background: s.bg, color: s.fg, border: `1px solid ${s.border}` }}>
                   {s.label.toUpperCase()}
                 </span>
               </div>
@@ -140,18 +186,24 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
       },
     ]
 
-    subjects.forEach((sub: Subject) => {
+    ;(subjects as Subject[]).forEach((sub: Subject) => {
       base.push({
         key: `subj:${sub.name}`,
         label: sub.shortName ?? sub.name,
+        // type: 'text' — DataGrid's native path: click td → onMouseDown → setEditing → input
+        // NO col.render here — eliminates all pointer-event overlap issues
         type: 'text',
         minWidth: 68,
         align: 'right',
-        placeholder: sub.periodsPerWeek ? String(sub.periodsPerWeek) : '—',
+        placeholder: sub.periodsPerWeek ? (
+          displayMode === 'hours'
+            ? `${Math.round(sub.periodsPerWeek * periodMinutes / 60 * 10) / 10}`
+            : String(sub.periodsPerWeek)
+        ) : '—',
 
-        // getValue: returns value for editing.
-        // In hours mode, converts stored periods to hours string for editing.
-        // "0" is treated as not-applicable → returns '' so cell appears empty.
+        // getValue: what the cell displays AND what the editor starts with.
+        // Hours mode: returns the hours-equivalent number so users type hours.
+        // "0" = not applicable → empty cell.
         getValue: (r) => {
           const v = subjectAllocations[r.sectionName]?.[sub.name]
           if (!v || v === '0') return ''
@@ -160,202 +212,99 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
             if (parsed.valid && parsed.weeklyTotal > 0) {
               return String(Math.round(parsed.weeklyTotal * periodMinutes / 60 * 10) / 10)
             }
+            return '' // invalid stored value — show empty in hours mode
           }
           return v
         },
 
-        // setValue: stores value + auto-fills all same-grade sections.
-        // In hours mode, converts a plain numeric input back to periods.
+        // setValue: stores back to the store.
+        // Hours mode: converts typed number (or "Nh") back to periods before storing.
+        // Same-grade auto-fill: propagates to all sibling sections atomically.
         setValue: (r, v) => {
-          let val = String(v ?? '').trim()
+          let val = String(v ?? '').trim().replace(/h$/i, '')
 
-          // Hours mode: if user typed a plain number, convert to periods
-          if (displayMode === 'hours' && val && /^\d+(\.\d+)?$/.test(val)) {
-            const hours = parseFloat(val)
-            const periodCount = Math.max(0, Math.round(hours * 60 / periodMinutes))
-            val = String(periodCount)
+          if (displayMode === 'hours') {
+            const n = parseFloat(val)
+            if (!isNaN(n) && /^\d+(\.\d+)?$/.test(val)) {
+              val = String(Math.max(0, Math.round(n * 60 / periodMinutes)))
+            }
           }
+
+          // Collect this section + all same-grade siblings for atomic update
           const grade = gradeOf(r.sectionName)
+          const siblings: Section[] = grade !== r.sectionName
+            ? (sections as Section[]).filter(
+                (s: Section) => gradeOf(s.name) === grade && s.name !== r.sectionName
+              )
+            : []
 
-          // Write to this section
-          store.setSubjectAllocationCell?.(r.sectionName, sub.name, val)
+          // Build a single merged subjectAllocations update
+          const merged: Record<string, Record<string, string>> = { ...subjectAllocations }
 
-          // Auto-fill same-grade sibling sections (only if this section belongs to a grade group)
-          if (grade) {
-            const siblings: Section[] = (sections as Section[]).filter(
-              (s: Section) => gradeOf(s.name) !== s.name && // only if section has a grade prefix (e.g. "Nursery-A")
-                             gradeOf(s.name) === grade &&
-                             s.name !== r.sectionName
-            )
-            siblings.forEach((s: Section) => {
-              // Only fill sibling if it doesn't already have a manually set value
-              // (or if it had the same value as old section value — propagate edit)
-              store.setSubjectAllocationCell?.(s.name, sub.name, val)
-            })
+          const applyToSection = (secName: string) => {
+            const existing = { ...(subjectAllocations[secName] ?? {}) }
+            if (val === '') {
+              delete existing[sub.name]
+            } else {
+              existing[sub.name] = val
+            }
+            if (Object.keys(existing).length === 0) {
+              delete merged[secName]
+            } else {
+              merged[secName] = existing
+            }
           }
 
+          applyToSection(r.sectionName)
+          siblings.forEach(s => applyToSection(s.name))
+
+          store.setSubjectAllocations?.(merged)
           return r
         },
 
-        // cellStyle: validation background — safe, no pointer event interception
-        cellStyle: (value, row) => {
-          if (!value) return {}
-          const parsed = parseAllocation(value)
+        // cellStyle: validation background based on raw stored allocation
+        cellStyle: (_, row) => {
+          const rawV = subjectAllocations[row.sectionName]?.[sub.name]
+          if (!rawV || rawV === '0') return {}
+          const parsed = parseAllocation(rawV)
           if (!parsed.valid) return { background: '#FEF2F2' }
           const band = inferBandFromSection(row.sectionName)
           const cellCap = capacityForSection(cap, band)
-          const validation = validateAllocationCapacity(parsed, cellCap)
-          if (!validation.ok) return { background: '#FFFBEB' }
+          if (!validateAllocationCapacity(parsed, cellCap).ok) return { background: '#FFFBEB' }
           return {}
-        },
-
-        // render: display-only content; ALL elements have pointerEvents:none
-        // so every click falls through to the DataGrid <td> and triggers editing
-        render: (value, row) => {
-          if (!value) return null
-
-          const parsed = parseAllocation(value)
-          const invalid = !parsed.valid
-          const band = inferBandFromSection(row.sectionName)
-          const cellCap = capacityForSection(cap, band)
-          const overCap = parsed.valid && !validateAllocationCapacity(parsed, cellCap).ok
-
-          // Convert to display unit
-          const displayVal = (() => {
-            if (displayMode === 'hours' && parsed.valid && parsed.weeklyTotal > 0) {
-              return `${Math.round(parsed.weeklyTotal * periodMinutes / 60 * 10) / 10}h`
-            }
-            return value
-          })()
-
-          return (
-            <div style={{
-              padding: '0 6px',
-              textAlign: 'right' as const,
-              position: 'relative' as const,
-              pointerEvents: 'none' as const,  // ← critical: all clicks fall through to <td>
-            }}>
-              <span style={{
-                fontFamily: "'DM Mono', monospace",
-                fontSize: 12, fontWeight: 700,
-                color: invalid ? '#DC2626' : overCap ? '#D97706' : '#13111E',
-              }}>
-                {displayVal}
-              </span>
-              {/* Tiny weekly-total badge (periods mode only, top-right corner) */}
-              {displayMode === 'periods' && parsed.valid && parsed.weeklyTotal > 0 && (
-                <span style={{
-                  position: 'absolute' as const, top: 0, right: 2,
-                  fontSize: 7, fontWeight: 800,
-                  color: parsed.weeklyTotal > 6 ? '#7C6FE0' : '#16A34A',
-                }}>
-                  {parsed.weeklyTotal}
-                </span>
-              )}
-              {invalid && (
-                <span style={{
-                  position: 'absolute' as const, top: 1, right: 3,
-                  fontSize: 9, fontWeight: 800, color: '#DC2626',
-                }}>!</span>
-              )}
-            </div>
-          )
         },
       })
     })
 
     return base
-  }, [subjects, sections, cap, rowTotals, subjectAllocations, store, displayMode, periodMinutes])
+  }, [subjects, sections, cap, rowTotals, subjectAllocations, displayMode, periodMinutes])
 
-  // ── AI Suggest — conflict-free defaults ──────────────────────
-  const handleAISuggest = () => {
-    const next: Record<string, Record<string, string>> = {}
-
-    sections.forEach((sec: Section) => {
-      const band = inferBandFromSection(sec.name)
-      const capacity = capacityForSection(cap, band)
-
-      interface IdealItem { name: string; pw: number; isLab: boolean }
-      const ideal: IdealItem[] = (subjects as Subject[])
-        .filter((sub: Subject) => sub.periodsPerWeek && sub.periodsPerWeek > 0)
-        .map((sub: Subject) => ({
-          name: sub.name,
-          pw: sub.periodsPerWeek!,
-          isLab: !!(sub as any).requiresLab,
-        }))
-
-      const totalIdeal = ideal.reduce((a, s) => a + s.pw, 0)
-      const row: Record<string, string> = {}
-
-      if (ideal.length === 0) return
-
-      if (capacity <= 0 || totalIdeal <= capacity) {
-        // Everything fits — use as-is
-        ideal.forEach(s => {
-          row[s.name] = s.isLab
-            ? `${Math.max(1, s.pw - 1)}+1L`
-            : String(s.pw)
-        })
-      } else {
-        // Scale proportionally so total ≤ capacity (no over-cap)
-        const scale = capacity / totalIdeal
-        let allocated = 0
-        ideal.forEach((s, i) => {
-          const isLast = i === ideal.length - 1
-          const raw = isLast
-            ? Math.max(0, capacity - allocated)
-            : Math.max(1, Math.round(s.pw * scale))
-          if (raw > 0) row[s.name] = String(raw)
-          allocated += raw
-        })
-      }
-
-      if (Object.keys(row).length) next[sec.name] = row
-    })
-
-    store.setSubjectAllocations?.(next)
-  }
-
-  // Auto-run capacity-aware AI fill on first load if no allocations exist yet
-  useEffect(() => {
-    const hasAny = Object.values(subjectAllocations ?? {}).some(
-      (row: any) => Object.values(row ?? {}).some((v: any) => v && String(v).trim() !== '' && v !== '0')
-    )
-    if (!hasAny && sections.length > 0 && subjects.length > 0) {
-      handleAISuggest()
-    }
-  // Only run once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleChange = (_newRows: Row[]) => { /* writes are per-cell via setValue */ }
+  const handleChange = (_: Row[]) => { /* per-cell writes via setValue */ }
 
   return (
     <div>
-      {/* Capacity banner + AI suggest */}
+      {/* Capacity info banner */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' as const,
-        padding: '7px 12px', marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const,
+        padding: '6px 12px', marginBottom: 8,
         background: 'linear-gradient(135deg, #EDE9FF 0%, #FAFAFE 100%)',
         border: '1px solid #D8D2FF', borderRadius: 8,
+        fontSize: 10, color: '#4B5275',
       }}>
-        <Grid3x3 size={13} color="#7C6FE0" />
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#13111E', fontFamily: "'DM Mono', monospace" }}>
+        <Grid3x3 size={12} color="#7C6FE0" />
+        <span style={{ fontWeight: 700, color: '#13111E', fontFamily: "'DM Mono', monospace" }}>
           {displayMode === 'hours'
             ? `${Math.round(cap.weeklyCapacity * periodMinutes / 60 * 10) / 10}h/week`
-            : `${cap.weeklyCapacity} periods/week`
-          }
+            : `${cap.weeklyCapacity} periods/week`}
         </span>
-        <span style={{ fontSize: 10, color: '#4B5275' }}>
-          {cap.workingDays} days × {cap.teachingPeriodsPerDay} periods
+        <span>{cap.workingDays} days × {cap.teachingPeriodsPerDay} periods
           {cap.breakPeriodsPerDay > 0 && ` − ${cap.breakPeriodsPerDay} break/day`}
         </span>
-        {/* Syntax legend inline */}
-        <span style={{ fontSize: 10, color: '#8B87AD' }}>
-          {[['5', 'theory'], ['5+1', '+lab'], ['3(2X)', 'doubles'], ['2L', 'lab']].map(([s, d]) => (
+        <span style={{ color: '#8B87AD' }}>
+          Syntax:&nbsp;
+          {[['5','theory'],['5+1','+lab'],['3(2X)','doubles'],['2L','lab']].map(([s,d]) => (
             <span key={s} style={{ marginRight: 8 }}>
-              <strong style={{ fontFamily: "'DM Mono', monospace", color: '#4B5275' }}>{s}</strong>
-              {' '}{d}
+              <strong style={{ fontFamily: "'DM Mono', monospace", color: '#4B5275' }}>{s}</strong> {d}
             </span>
           ))}
         </span>
@@ -363,7 +312,7 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
 
       <DataGrid<Row>
         title="Period Allocation"
-        description="Periods per subject per section. Click any cell to edit. Same-grade sections sync automatically."
+        description="Click any cell to edit. Editing one section auto-fills all sections of the same grade."
         icon={<Grid3x3 size={16} />}
         columns={columns}
         rows={rows}
@@ -371,7 +320,7 @@ export function AllocationGrid({ displayMode = 'periods', periodMinutes = 40, to
         onChange={handleChange}
         toolbarExtra={toolbarExtra}
         toolbar={{
-          add: false, importCSV: true, exportCSV: true,
+          add: false, importCSV: true, exportCSV: true, importXLSX: false, exportXLSX: false,
           paste: true, search: true, transpose: false, bulkActions: false,
           undoRedo: true, filters: false, fillDown: true,
         }}
