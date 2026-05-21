@@ -337,7 +337,7 @@ export function TeachersGrid({
   const columns: DataGridColumn<Staff>[] = [
     { key: 'name',   label: 'Teacher', type: 'text',   sticky: true, width: 180, placeholder: 'e.g. John Smith' },
     { key: 'role',   label: 'Role',    type: 'select', options: ROLES,    width: 160, placeholder: 'Select role' },
-    { key: 'gender', label: 'Gender',  type: 'select', options: GENDERS,  width: 110, placeholder: 'Select' },
+    { key: 'gender', label: 'Gender',  type: 'select', options: GENDERS,  width: 110, placeholder: 'Male/Female/Other' },
     {
       key: 'isClassTeacher', label: 'Class Teacher of', type: 'select', options: sectionOptions, width: 160,
       placeholder: 'None',

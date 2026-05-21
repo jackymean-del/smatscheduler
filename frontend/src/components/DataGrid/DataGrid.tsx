@@ -274,7 +274,7 @@ export function DataGrid<T>({
   // context-menu (right-click row) — rowTop/rowBottom anchor to the row's rect, not cursor
   const [ctxMenu, setCtxMenu] = useState<{ x: number; rowTop: number; rowBottom: number; ri: number } | null>(null)
 
-  // Row hover — only set when hovering the ACTIONS column cell (not the whole row)
+  // Row hover — set by row-number cell OR actions cell; highlights the entire row
   const [hoveredRow, setHoveredRow] = useState<number | null>(null)
   // Individual data-cell hover — shows subtle tint on the hovered cell
   const [hoveredCell, setHoveredCell] = useState<{ r: number; c: number } | null>(null)
@@ -1337,13 +1337,19 @@ export function DataGrid<T>({
                   setCtxMenu({ x: e.clientX, rowTop: rect.top, rowBottom: rect.bottom, ri })
                 }}>
 
-                {/* Row number — click to select entire row */}
+                {/* Row number — hover highlights row, click selects entire row */}
                 <td
+                  onMouseEnter={() => setHoveredRow(ri)}
+                  onMouseLeave={() => setHoveredRow(null)}
                   style={{
                     ...tdRowNum(ri),
                     cursor: 'pointer',
+                    transition: 'background 0.12s ease',
                     background: selection?.r === ri && selectionEnd?.c === columns.length - 1
-                      ? '#DDD9FF' : undefined,
+                      ? '#C7C0FF'
+                      : hoveredRow === ri
+                        ? '#DDD9FF'
+                        : undefined,
                   }}
                   title="Click to select entire row"
                   onClick={() => {
