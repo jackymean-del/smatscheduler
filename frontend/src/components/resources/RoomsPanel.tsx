@@ -1,659 +1,324 @@
 /**
- * RoomsPanel — room setup with class and subject relationships.
+ * RoomsPanel — Tab 4.
  *
- * Relationships owned here:
- *   Room → Home Class  (read-only, derived from sections where section.room === room.name)
- *   Room → Subject mapping  (e.g. Physics Lab → Physics Practical)
+ * Assign rooms to classes (home room) and special subjects.
  *
- * Room details and usage rules are editable via a side drawer.
+ * Columns: Room | Type | Cap | Assigned Classes | Special Subjects
+ *
+ * Features:
+ *   - InlineChipSelect for home class assignment (writes section.room)
+ *   - InlineChipSelect for special subject mapping
+ *   - Inline name, type, capacity editing
+ *   - Add room inline at bottom
  */
 
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import type { Subject, Section } from '@/types'
 import type { RoomRow } from '@/components/master/EntityGrids'
-import { Plus, Search, Trash2, X, Building2, Home, BookOpen } from 'lucide-react'
+import { Trash2, Plus } from 'lucide-react'
+import { P, TH, TD, InlineChipSelect } from './shared'
+import type { ChipOption } from './shared'
 
-const P = '#7C6FE0'
-const ROOM_TYPES = ['Classroom', 'Lab', 'Computer Lab', 'Library', 'Hall', 'Gym', 'Staff Room', 'Other']
+export type RoomExt = RoomRow & { subjectMappings?: string[]; notes?: string }
 
 function makeId() { return Math.random().toString(36).slice(2, 9) }
 
-// ─────────────────────────────────────────────────────────────
-// Primitives
-// ─────────────────────────────────────────────────────────────
-
-function useClickOutside(ref: React.RefObject<HTMLElement | null>, fn: () => void, active: boolean) {
-  useEffect(() => {
-    if (!active) return
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) fn()
-    }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [active, fn, ref])
+function getGrade(name: string): string {
+  const t = name.trim()
+  const idx = t.lastIndexOf('-')
+  if (idx > 0 && t.slice(idx + 1).length <= 3)
+    return t.slice(0, idx).replace(/-(sci|com|arts?|hum|gen|pcm|pcb)$/i, '').trim()
+  return t
 }
+const GRADE_ORDER = ['Nursery','LKG','UKG','I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII']
+function gradeKey(g: string) { const i = GRADE_ORDER.indexOf(g); return i >= 0 ? i : 100 + g.charCodeAt(0) }
 
-const TH: React.CSSProperties = {
-  padding: '10px 14px', textAlign: 'left', fontWeight: 600,
-  fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase',
-  color: '#888', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap',
-}
-const TD: React.CSSProperties = {
-  padding: '10px 14px', fontSize: 13, color: '#1a1a2e',
-  borderBottom: '1px solid #f7f7f9', verticalAlign: 'middle',
-}
-
-// ─────────────────────────────────────────────────────────────
-// RoomTypeBadge
-// ─────────────────────────────────────────────────────────────
-
+const ROOM_TYPES = ['Classroom','Lab','Computer Lab','Library','Hall','Gym','Staff Room','Other']
 const TYPE_COLORS: Record<string, string> = {
-  Classroom: '#4a9eff', Lab: '#e74c3c', 'Computer Lab': '#2ecc71',
+  Classroom: '#4a9eff', Lab: '#e74c3c', 'Computer Lab': '#27ae60',
   Library: '#f39c12', Hall: '#9b59b6', Gym: '#1abc9c',
-  'Staff Room': '#95a5a6', Other: '#888',
+  'Staff Room': '#95a5a6', Other: '#aaa',
 }
 
-function RoomTypeBadge({ type }: { type: string }) {
-  const color = TYPE_COLORS[type] ?? '#888'
+const fld: React.CSSProperties = {
+  padding: '4px 7px', border: '1px solid #e0dcff', borderRadius: 5,
+  fontSize: 12, color: '#1a1a2e', outline: 'none', fontFamily: 'inherit', background: '#fff',
+}
+
+// ─── Inline name cell ─────────────────────────────────────────────────────────
+function NameCell({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [e, setE] = useState(false)
+  const [t, setT] = useState(value)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (e) ref.current?.focus() }, [e])
+  useEffect(() => { setT(value) }, [value])
+  function commit() { onSave(t.trim() || value); setE(false) }
+  if (e) return (
+    <input ref={ref} value={t} onChange={ev => setT(ev.target.value)}
+      onBlur={commit}
+      onKeyDown={ev => { if (ev.key === 'Enter') commit(); if (ev.key === 'Escape') { setT(value); setE(false) } }}
+      style={{ ...fld, width: 150 }}
+    />
+  )
   return (
-    <span style={{
-      background: color + '18', color, borderRadius: 4,
-      padding: '2px 7px', fontSize: 11, fontWeight: 600,
-      border: `1px solid ${color}33`,
-    }}>{type}</span>
+    <span onClick={() => setE(true)} title="Click to edit"
+      style={{ cursor: 'text', fontWeight: 600, padding: '2px 4px', borderRadius: 4, display: 'inline-block' }}
+      onMouseEnter={ev => (ev.currentTarget.style.background = '#f0eeff')}
+      onMouseLeave={ev => (ev.currentTarget.style.background = '')}
+    >{value}</span>
   )
 }
 
-// ─────────────────────────────────────────────────────────────
-// SubjectChipPicker — inline chip multi-select for subject mapping
-// ─────────────────────────────────────────────────────────────
+// ─── AddRow ───────────────────────────────────────────────────────────────────
+function AddRow({ onAdd }: { onAdd: (r: RoomExt) => void }) {
+  const [active, setActive] = useState(false)
+  const [name, setName]   = useState('')
+  const [type, setType]   = useState('Classroom')
+  const [cap, setCap]     = useState(40)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (active) ref.current?.focus() }, [active])
 
-function SubjectChipPicker({ selected, subjects, onChange }: {
-  selected: string[]
-  subjects: Subject[]
-  onChange: (v: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-  useClickOutside(ref, () => setOpen(false), open)
+  function commit() {
+    if (!name.trim()) { setActive(false); return }
+    onAdd({ id: makeId(), name: name.trim(), type, capacity: cap, building: '', floor: '', subjectMappings: [], notes: '' })
+    setName(''); setType('Classroom'); setCap(40); setActive(false)
+  }
 
-  const filtered = subjects.filter(s =>
-    s.name.toLowerCase().includes(q.toLowerCase()) && !selected.includes(s.name)
+  if (!active) return (
+    <tr>
+      <td colSpan={6} style={{ ...TD, padding: '10px 12px' }}>
+        <button onClick={() => setActive(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: '1px dashed #d0ccff', borderRadius: 6, color: P, fontSize: 12, fontWeight: 600, padding: '5px 12px', cursor: 'pointer' }}>
+          <Plus size={13} /> Add Room
+        </button>
+      </td>
+    </tr>
   )
 
-  function remove(name: string) { onChange(selected.filter(s => s !== name)) }
-  function add(name: string) { onChange([...selected, name]); setQ('') }
-
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <div
-        onClick={() => setOpen(o => !o)}
-        style={{
-          minHeight: 36, border: `1px solid ${open ? P : '#e0dcff'}`, borderRadius: 6,
-          padding: '4px 8px', cursor: 'text', display: 'flex',
-          flexWrap: 'wrap', gap: 4, alignItems: 'center', background: '#fff',
-        }}
-      >
-        {selected.map(name => (
-          <span key={name} style={{
-            display: 'flex', alignItems: 'center', gap: 3,
-            background: '#f0eeff', color: P, borderRadius: 4, padding: '2px 6px',
-            fontSize: 11, fontWeight: 500, border: `1px solid ${P}22`,
-          }}>
-            {name}
-            <button
-              onClick={e => { e.stopPropagation(); remove(name) }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: P }}
-            >
-              <X size={10} />
-            </button>
-          </span>
-        ))}
-        {selected.length === 0 && !open && (
-          <span style={{ fontSize: 12, color: '#bbb' }}>Map subjects to this room…</span>
-        )}
-        <input
-          value={q} onChange={e => { setQ(e.target.value); setOpen(true) }}
-          onFocus={() => setOpen(true)}
-          placeholder={selected.length > 0 ? '' : ''}
-          style={{
-            border: 'none', outline: 'none', fontSize: 12, color: '#1a1a2e',
-            minWidth: 60, flex: 1, background: 'transparent',
-          }}
+    <tr style={{ background: '#faf9ff' }}>
+      <td style={TD}>
+        <input ref={ref} value={name} onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setActive(false) }}
+          placeholder="Room name" style={{ ...fld, width: 140 }}
         />
-      </div>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0,
-          background: '#fff', border: '1px solid #e8e4ff', borderRadius: 7,
-          boxShadow: '0 6px 20px rgba(124,111,224,0.12)', zIndex: 50,
-          maxHeight: 180, overflowY: 'auto', marginTop: 3,
-        }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '10px 12px', fontSize: 12, color: '#bbb' }}>
-              {subjects.length === 0 ? 'No subjects added yet' : 'No matches'}
-            </div>
-          ) : filtered.map(s => (
-            <div
-              key={s.id}
-              onMouseDown={e => { e.preventDefault(); add(s.name) }}
-              style={{
-                padding: '8px 12px', fontSize: 13, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: 8,
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f5f3ff')}
-              onMouseLeave={e => (e.currentTarget.style.background = '')}
-            >
-              <span style={{
-                width: 8, height: 8, borderRadius: '50%', background: s.color,
-                flexShrink: 0,
-              }} />
-              {s.name}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      </td>
+      <td style={TD}>
+        <select value={type} onChange={e => setType(e.target.value)} style={{ ...fld, width: 120 }}>
+          {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </td>
+      <td style={TD}>
+        <input type="number" value={cap} onChange={e => setCap(+e.target.value)} min={1} max={999} style={{ ...fld, width: 54 }} />
+      </td>
+      <td colSpan={3} style={{ ...TD, whiteSpace: 'nowrap' }}>
+        <button onClick={commit} style={{ background: P, color: '#fff', border: 'none', borderRadius: 5, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginRight: 4 }}>✓</button>
+        <button onClick={() => setActive(false)} style={{ background: '#f0f0f0', color: '#888', border: 'none', borderRadius: 5, padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>✗</button>
+      </td>
+    </tr>
   )
 }
 
-// ─────────────────────────────────────────────────────────────
-// RoomDrawer
-// ─────────────────────────────────────────────────────────────
-
-interface RoomExt extends RoomRow {
-  subjectMappings?: string[]  // subject names this room is mapped to
-  notes?: string
-}
-
-function RoomDrawer({ room, sections, subjects, onSave, onDelete, onClose }: {
-  room: RoomExt | null
-  sections: Section[]
-  subjects: Subject[]
-  onSave: (r: RoomExt) => void
-  onDelete: (id: string) => void
-  onClose: () => void
+// ─── Room row ─────────────────────────────────────────────────────────────────
+function RoomRow_({ room, classOpts, subjectOpts, assignedClasses, onUpdate, onUpdateSections, onDelete }: {
+  room: RoomExt
+  classOpts: ChipOption[]
+  subjectOpts: ChipOption[]
+  assignedClasses: string[]   // sections currently mapped to this room
+  onUpdate: (p: Partial<RoomExt>) => void
+  onUpdateSections: (add: string[], remove: string[]) => void
+  onDelete: () => void
 }) {
-  const isNew = !room?.id || room.id === '__new'
+  const typeColor = TYPE_COLORS[room.type] ?? '#aaa'
 
-  const defaultRoom = (): RoomExt => ({
-    id: makeId(), name: '', type: 'Classroom', capacity: 40,
-    building: '', floor: '', subjectMappings: [], notes: '',
-  })
-
-  const [form, setForm] = useState<RoomExt>(room ?? defaultRoom())
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-
-  useEffect(() => {
-    setForm(room ?? defaultRoom())
-    setShowDeleteConfirm(false)
-  }, [room?.id])
-
-  // Read-only: which section calls this room home
-  const homeClass = useMemo(
-    () => sections.filter(s => s.room === form.name),
-    [sections, form.name]
-  )
-
-  const open = room !== null
+  function handleClassChange(next: string[]) {
+    const prev = assignedClasses
+    const toAdd    = next.filter(v => !prev.includes(v))
+    const toRemove = prev.filter(v => !next.includes(v))
+    onUpdateSections(toAdd, toRemove)
+  }
 
   return (
-    <>
-      <div
-        onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.18)',
-          zIndex: 200, opacity: open ? 1 : 0,
-          pointerEvents: open ? 'auto' : 'none',
-          transition: 'opacity 0.2s',
-        }}
-      />
-      <div style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 480,
-        background: '#fff', zIndex: 201, boxShadow: '-4px 0 32px rgba(0,0,0,0.12)',
-        display: 'flex', flexDirection: 'column',
-        transform: open ? 'translateX(0)' : 'translateX(100%)',
-        transition: 'transform 0.25s cubic-bezier(.32,.72,0,1)',
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: '20px 24px 16px', borderBottom: '1px solid #f0f0f0',
-          display: 'flex', alignItems: 'center', gap: 12,
-        }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 8,
-            background: (TYPE_COLORS[form.type] ?? '#888') + '18',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            <Building2 size={17} color={TYPE_COLORS[form.type] ?? '#888'} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>
-              {isNew ? 'New Room' : form.name || 'Room'}
-            </div>
-            <div style={{ fontSize: 12, color: '#888', marginTop: 1 }}>
-              {form.type} · Cap {form.capacity}
-            </div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-            <X size={18} color="#999" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-
-          {/* ── Room Details ── */}
-          <section style={{ marginBottom: 22 }}>
-            <SectionHeading>Room Details</SectionHeading>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label style={{ ...labelStyle, gridColumn: 'span 2' }}>
-                Room Name *
-                <input
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Room 101, Physics Lab"
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={labelStyle}>
-                Room Type
-                <select
-                  value={form.type}
-                  onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-                  style={fieldStyle}
-                >
-                  {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </label>
-              <label style={labelStyle}>
-                Capacity
-                <input
-                  type="number" min={1} max={999} value={form.capacity}
-                  onChange={e => setForm(f => ({ ...f, capacity: +e.target.value }))}
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={labelStyle}>
-                Building
-                <input
-                  value={form.building}
-                  onChange={e => setForm(f => ({ ...f, building: e.target.value }))}
-                  placeholder="e.g. Block A"
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={labelStyle}>
-                Floor
-                <input
-                  value={form.floor}
-                  onChange={e => setForm(f => ({ ...f, floor: e.target.value }))}
-                  placeholder="e.g. Ground, 1st"
-                  style={fieldStyle}
-                />
-              </label>
-            </div>
-          </section>
-
-          {/* ── Home Class (read-only) ── */}
-          <section style={{ marginBottom: 22 }}>
-            <SectionHeading>Home Class</SectionHeading>
-            <div style={{
-              padding: '10px 14px', borderRadius: 8, background: '#faf9ff',
-              border: '1px solid #eeebff', display: 'flex', alignItems: 'center', gap: 8,
-            }}>
-              <Home size={14} color={P} />
-              {homeClass.length === 0 ? (
-                <span style={{ fontSize: 12, color: '#bbb', fontStyle: 'italic' }}>
-                  {form.name
-                    ? 'No class uses this as their home room'
-                    : 'Save the room name to see home class assignments'}
-                </span>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {homeClass.map(s => (
-                    <span key={s.id} style={{
-                      background: '#f0eeff', color: P, borderRadius: 4, padding: '2px 8px',
-                      fontSize: 12, fontWeight: 500, border: `1px solid ${P}22`,
-                    }}>{s.name}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <p style={{ fontSize: 11, color: '#aaa', marginTop: 6, marginBottom: 0 }}>
-              Home room assignment is managed in the Classes tab.
-            </p>
-          </section>
-
-          {/* ── Subject Mapping ── */}
-          <section style={{ marginBottom: 22 }}>
-            <SectionHeading>Subject Mapping</SectionHeading>
-            <p style={{ fontSize: 12, color: '#888', marginBottom: 10, marginTop: 0 }}>
-              Map subjects that are taught in this room (e.g. Physics Lab → Physics, Physics Practical).
-              The scheduler will prefer this room when booking those subjects.
-            </p>
-            <SubjectChipPicker
-              selected={form.subjectMappings ?? []}
-              subjects={subjects}
-              onChange={v => setForm(f => ({ ...f, subjectMappings: v }))}
-            />
-          </section>
-
-          {/* ── Notes / Usage Rules ── */}
-          <section style={{ marginBottom: 22 }}>
-            <SectionHeading>Notes & Usage Rules</SectionHeading>
-            <textarea
-              value={form.notes ?? ''}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              placeholder="e.g. Requires booking 48h in advance. Not available Mon morning."
-              rows={3}
-              style={{
-                ...fieldStyle, width: '100%', resize: 'vertical',
-                fontFamily: 'inherit', boxSizing: 'border-box',
-              }}
-            />
-          </section>
-
-          {/* ── Danger zone ── */}
-          {!isNew && (
-            <section style={{ borderTop: '1px solid #fde8e8', paddingTop: 16 }}>
-              {!showDeleteConfirm ? (
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    background: 'none', border: '1px solid #fde8e8', borderRadius: 6,
-                    color: '#e74c3c', fontSize: 12, fontWeight: 600, padding: '6px 12px', cursor: 'pointer',
-                  }}
-                >
-                  <Trash2 size={13} /> Remove Room
-                </button>
-              ) : (
-                <div style={{
-                  padding: '12px 14px', borderRadius: 8, background: '#fff5f5',
-                  border: '1px solid #fde8e8',
-                }}>
-                  <div style={{ fontSize: 13, color: '#e74c3c', fontWeight: 600, marginBottom: 6 }}>
-                    Remove "{form.name}"?
-                  </div>
-                  <div style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
-                    Any class using this as their home room will lose the assignment.
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      onClick={() => onDelete(form.id)}
-                      style={{ background: '#e74c3c', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                    >
-                      Yes, Remove
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      style={{ background: '#f5f5f5', color: '#666', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          padding: '14px 24px', borderTop: '1px solid #f0f0f0',
-          display: 'flex', gap: 10, justifyContent: 'flex-end',
-        }}>
-          <button onClick={onClose} style={cancelBtn}>Cancel</button>
-          <button
-            onClick={() => onSave(form)}
-            disabled={!form.name.trim()}
-            style={{
-              ...saveBtn,
-              opacity: form.name.trim() ? 1 : 0.5,
-              cursor: form.name.trim() ? 'pointer' : 'not-allowed',
-            }}
-          >
-            {isNew ? 'Add Room' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
-    </>
+    <tr
+      onMouseEnter={e => (e.currentTarget.style.background = '#fafbff')}
+      onMouseLeave={e => (e.currentTarget.style.background = '')}
+    >
+      {/* Name */}
+      <td style={TD}>
+        <NameCell value={room.name} onSave={v => onUpdate({ name: v })} />
+      </td>
+      {/* Type */}
+      <td style={TD}>
+        <select value={room.type} onChange={e => onUpdate({ type: e.target.value })}
+          style={{ padding: '3px 6px', border: `1px solid ${typeColor}44`, borderRadius: 5, fontSize: 11, fontWeight: 600, color: typeColor, outline: 'none', background: `${typeColor}0e`, cursor: 'pointer' }}>
+          {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </td>
+      {/* Capacity */}
+      <td style={TD}>
+        <input type="number" value={room.capacity} min={1} max={999}
+          onChange={e => onUpdate({ capacity: +e.target.value })}
+          style={{ width: 54, padding: '3px 5px', border: '1px solid #e8e4ff', borderRadius: 5, fontSize: 13, color: '#555', outline: 'none', textAlign: 'center' }}
+        />
+      </td>
+      {/* Assigned Classes (home room) */}
+      <td style={{ ...TD, minWidth: 140 }}>
+        <InlineChipSelect
+          selected={assignedClasses}
+          options={classOpts}
+          onChange={handleClassChange}
+          placeholder="+ Assign class"
+          maxChips={2}
+        />
+      </td>
+      {/* Special Subjects */}
+      <td style={{ ...TD, minWidth: 140 }}>
+        <InlineChipSelect
+          selected={room.subjectMappings ?? []}
+          options={subjectOpts}
+          onChange={v => onUpdate({ subjectMappings: v })}
+          placeholder="+ Special subjects"
+          maxChips={2}
+        />
+      </td>
+      {/* Delete */}
+      <td style={{ ...TD, textAlign: 'right', paddingRight: 10 }}>
+        <button onClick={onDelete}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e0d8ff', padding: 3 }}
+          onMouseEnter={e => (e.currentTarget.style.color = '#e74c3c')}
+          onMouseLeave={e => (e.currentTarget.style.color = '#e0d8ff')}
+        >
+          <Trash2 size={13} />
+        </button>
+      </td>
+    </tr>
   )
 }
 
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      fontSize: 11, fontWeight: 700, color: '#888',
-      letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10,
-    }}>{children}</div>
-  )
-}
-
-const labelStyle: React.CSSProperties = {
-  display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: '#666', fontWeight: 600,
-}
-const fieldStyle: React.CSSProperties = {
-  padding: '7px 10px', border: '1px solid #e0dcff', borderRadius: 6,
-  fontSize: 13, color: '#1a1a2e', outline: 'none', background: '#fff', fontFamily: 'inherit',
-}
-const cancelBtn: React.CSSProperties = {
-  padding: '8px 18px', background: '#f5f5f5', color: '#555', border: 'none',
-  borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-}
-const saveBtn: React.CSSProperties = {
-  padding: '8px 20px', background: P, color: '#fff', border: 'none',
-  borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer',
-}
-
-// ─────────────────────────────────────────────────────────────
-// Main panel
-// ─────────────────────────────────────────────────────────────
-
-export function RoomsPanel({ rooms, setRooms, sections, subjects }: {
+// ─── Main export ──────────────────────────────────────────────────────────────
+export function RoomsPanel({ rooms, setRooms, sections, setSections, subjects }: {
   rooms: RoomExt[]
   setRooms: (r: RoomExt[]) => void
   sections: Section[]
+  setSections: (s: Section[]) => void
   subjects: Subject[]
 }) {
-  const [drawerRoom, setDrawerRoom] = useState<RoomExt | null>(null)
   const [search, setSearch] = useState('')
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
     if (!q) return rooms
-    return rooms.filter(r =>
-      r.name.toLowerCase().includes(q) || r.type.toLowerCase().includes(q) ||
-      r.building.toLowerCase().includes(q)
-    )
+    return rooms.filter(r => r.name.toLowerCase().includes(q) || r.type.toLowerCase().includes(q))
   }, [rooms, search])
 
-  // Home class count per room name
-  const homeClassCount = useMemo(() => {
-    const map = new Map<string, number>()
+  // Class options (grade-grouped)
+  const classOpts = useMemo<ChipOption[]>(() => {
+    const map = new Map<string, string[]>()
     sections.forEach(s => {
-      if (s.room) map.set(s.room, (map.get(s.room) ?? 0) + 1)
+      const g = getGrade(s.name)
+      if (!map.has(g)) map.set(g, [])
+      map.get(g)!.push(s.name)
     })
-    return map
+    const sorted = [...map.entries()].sort((a, b) => gradeKey(a[0]) - gradeKey(b[0]))
+    const opts: ChipOption[] = []
+    sorted.forEach(([grade, names]) => names.forEach(n => opts.push({ value: n, label: n, group: `Grade ${grade}` })))
+    return opts
   }, [sections])
 
-  function openNew() {
-    setDrawerRoom({
-      id: '__new', name: '', type: 'Classroom', capacity: 40,
-      building: '', floor: '', subjectMappings: [], notes: '',
+  // Subject options (flat)
+  const subjectOpts = useMemo<ChipOption[]>(
+    () => subjects.map(s => ({ value: s.name, label: s.name })),
+    [subjects]
+  )
+
+  // Which sections are assigned to each room
+  const roomClassMap = useMemo(() => {
+    const map = new Map<string, string[]>()
+    rooms.forEach(r => map.set(r.name, []))
+    sections.forEach(s => {
+      if (s.room && map.has(s.room)) map.get(s.room)!.push(s.name)
     })
+    return map
+  }, [rooms, sections])
+
+  function updateRoom(id: string, p: Partial<RoomExt>) {
+    setRooms(rooms.map(r => r.id === id ? { ...r, ...p } : r))
   }
 
-  function handleSave(updated: RoomExt) {
-    const exists = rooms.some(r => r.id === updated.id)
-    if (exists) {
-      setRooms(rooms.map(r => r.id === updated.id ? updated : r))
-    } else {
-      setRooms([...rooms, { ...updated, id: makeId() }])
+  function updateSections(roomName: string, toAdd: string[], toRemove: string[]) {
+    setSections(sections.map(s => {
+      if (toAdd.includes(s.name))    return { ...s, room: roomName }
+      if (toRemove.includes(s.name)) return { ...s, room: '' }
+      return s
+    }))
+  }
+
+  function removeRoom(id: string) {
+    const room = rooms.find(r => r.id === id)
+    if (room) {
+      // Clear room from sections that used it
+      setSections(sections.map(s => s.room === room.name ? { ...s, room: '' } : s))
     }
-    setDrawerRoom(null)
+    setRooms(rooms.filter(r => r.id !== id))
   }
 
-  function handleDelete(id: string) {
-    setRooms(rooms.filter(r => r.id !== id))
-    setDrawerRoom(null)
-  }
+  function addRoom(r: RoomExt) { setRooms([...rooms, r]) }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Top bar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '0 0 16px',
-        borderBottom: '1px solid #f0f0f0',
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 12, borderBottom: '1px solid #f0eeff', flexShrink: 0 }}>
         <div style={{ position: 'relative', flex: 1 }}>
-          <Search size={14} color="#bbb" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search rooms..."
-            style={{
-              width: '100%', padding: '8px 10px 8px 32px',
-              border: '1px solid #e8e8f0', borderRadius: 8, fontSize: 13,
-              color: '#1a1a2e', outline: 'none', boxSizing: 'border-box',
-            }}
+          <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#ccc', pointerEvents: 'none' }}>⌕</span>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search rooms…"
+            style={{ width: '100%', padding: '7px 10px 7px 28px', border: '1px solid #e8e4ff', borderRadius: 7, fontSize: 13, color: '#1a1a2e', outline: 'none', boxSizing: 'border-box' }}
           />
         </div>
-        <button
-          onClick={openNew}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: P, color: '#fff', border: 'none', borderRadius: 8,
-            padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            whiteSpace: 'nowrap', flexShrink: 0,
-          }}
-        >
-          <Plus size={15} /> Add Room
-        </button>
+        <span style={{ fontSize: 12, color: '#aaa', flexShrink: 0 }}>{rooms.length} room{rooms.length !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Table */}
-      <div style={{ flex: 1, overflowY: 'auto', marginTop: 14 }}>
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: '#bbb' }}>
-            <Building2 size={32} color="#e0dcff" style={{ marginBottom: 12 }} />
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#aaa', marginBottom: 6 }}>
-              {search ? 'No rooms match your search' : 'No rooms yet'}
-            </div>
-            {!search && (
-              <button
-                onClick={openNew}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  background: '#f0eeff', color: P, border: `1px solid ${P}33`,
-                  borderRadius: 6, padding: '8px 16px', fontSize: 13,
-                  fontWeight: 600, cursor: 'pointer', marginTop: 8,
-                }}
-              >
-                <Plus size={13} /> Add your first room
-              </button>
-            )}
+      <div style={{ flex: 1, overflowY: 'auto', marginTop: 10 }}>
+        {rooms.length === 0 && !search ? (
+          <div style={{ textAlign: 'center', padding: '60px 0' }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>🏫</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#aaa', marginBottom: 6 }}>No rooms yet</div>
+            <div style={{ fontSize: 12, color: '#ccc' }}>Add rooms, then assign classes and special subjects to them.</div>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ background: '#faf9ff' }}>
+              <tr>
                 <th style={TH}>Room</th>
-                <th style={TH}>Type</th>
-                <th style={{ ...TH, textAlign: 'center' }}>Cap</th>
-                <th style={TH}>Location</th>
-                <th style={TH}>Home Class</th>
-                <th style={TH}>Subjects</th>
-                <th style={{ ...TH, textAlign: 'right' }}>Actions</th>
+                <th style={{ ...TH, width: 130 }}>Type</th>
+                <th style={{ ...TH, width: 60, textAlign: 'center' }}>Cap</th>
+                <th style={TH}>Assigned Classes</th>
+                <th style={TH}>Special Subjects</th>
+                <th style={{ ...TH, width: 36 }} />
               </tr>
             </thead>
             <tbody>
-              {filtered.map(room => {
-                const homeCt = homeClassCount.get(room.name) ?? 0
-                const mappings = room.subjectMappings ?? []
-                return (
-                  <tr key={room.id}>
-                    <td style={TD}>
-                      <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{room.name}</div>
-                      {room.notes && (
-                        <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }} title={room.notes}>
-                          {room.notes.slice(0, 40)}{room.notes.length > 40 ? '…' : ''}
-                        </div>
-                      )}
-                    </td>
-                    <td style={TD}><RoomTypeBadge type={room.type} /></td>
-                    <td style={{ ...TD, textAlign: 'center', fontWeight: 600, color: '#555' }}>
-                      {room.capacity}
-                    </td>
-                    <td style={TD}>
-                      <span style={{ fontSize: 12, color: '#666' }}>
-                        {[room.building, room.floor].filter(Boolean).join(' · ') || '—'}
-                      </span>
-                    </td>
-                    <td style={TD}>
-                      {homeCt === 0 ? (
-                        <span style={{ fontSize: 12, color: '#ccc' }}>—</span>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <Home size={12} color={P} />
-                          <span style={{ fontSize: 12, color: P, fontWeight: 600 }}>{homeCt} class{homeCt !== 1 ? 'es' : ''}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td style={TD}>
-                      {mappings.length === 0 ? (
-                        <span style={{ fontSize: 12, color: '#ccc' }}>—</span>
-                      ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                          {mappings.slice(0, 2).map(m => (
-                            <span key={m} style={{
-                              background: '#f0eeff', color: P, borderRadius: 4,
-                              padding: '1px 6px', fontSize: 10, fontWeight: 500,
-                              border: `1px solid ${P}22`,
-                            }}>{m}</span>
-                          ))}
-                          {mappings.length > 2 && (
-                            <span style={{
-                              background: '#f5f5f5', color: '#888', borderRadius: 4,
-                              padding: '1px 6px', fontSize: 10, fontWeight: 500,
-                            }}>+{mappings.length - 2}</span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ ...TD, textAlign: 'right' }}>
-                      <button
-                        onClick={() => setDrawerRoom(room)}
-                        style={{
-                          background: '#f0eeff', color: P, border: `1px solid ${P}33`,
-                          borderRadius: 6, padding: '5px 12px', fontSize: 12,
-                          fontWeight: 600, cursor: 'pointer',
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
+              {filtered.map(room => (
+                <RoomRow_
+                  key={room.id}
+                  room={room}
+                  classOpts={classOpts}
+                  subjectOpts={subjectOpts}
+                  assignedClasses={roomClassMap.get(room.name) ?? []}
+                  onUpdate={p => updateRoom(room.id, p)}
+                  onUpdateSections={(add, rem) => updateSections(room.name, add, rem)}
+                  onDelete={() => removeRoom(room.id)}
+                />
+              ))}
+              {filtered.length === 0 && search && (
+                <tr><td colSpan={6} style={{ ...TD, textAlign: 'center', color: '#bbb', padding: 24 }}>No rooms match "{search}"</td></tr>
+              )}
+              <AddRow onAdd={addRoom} />
             </tbody>
           </table>
         )}
       </div>
-
-      {/* Drawer */}
-      <RoomDrawer
-        room={drawerRoom}
-        sections={sections}
-        subjects={subjects}
-        onSave={handleSave}
-        onDelete={handleDelete}
-        onClose={() => setDrawerRoom(null)}
-      />
     </div>
   )
 }
-
-export type { RoomExt }

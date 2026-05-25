@@ -11,7 +11,7 @@
  *   └────────────────────────┴────────────────────────────────────────────┘
  *   [← Step 1]   Step 2 of 5 · All 4 resource types required   [Next →]
  *
- * Tab order:  Teachers → Classes → Subjects → Rooms
+ * Tab order:  Classes → Subjects → Teachers → Rooms
  * Each tab renders a relationship-driven panel (side-drawer UX).
  */
 
@@ -31,12 +31,12 @@ import {
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────
-type TabKey = 'teachers' | 'classes' | 'subjects' | 'rooms'
+type TabKey = 'classes' | 'subjects' | 'teachers' | 'rooms'
 
 const TAB_META: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'teachers', label: 'Teachers', icon: <Users size={15} /> },
   { key: 'classes',  label: 'Classes',  icon: <GraduationCap size={15} /> },
   { key: 'subjects', label: 'Subjects', icon: <BookOpen size={15} /> },
+  { key: 'teachers', label: 'Teachers', icon: <Users size={15} /> },
   { key: 'rooms',    label: 'Rooms',    icon: <Building2 size={15} /> },
 ]
 
@@ -148,7 +148,7 @@ export function StepResourcesV2() {
   const { config, sections, staff, subjects, setSections, setStaff, setBreaks, setStep } = store
   const setSubjects = store.setSubjects ?? store.setLegacySubjects
 
-  const [activeTab, setActiveTab] = useState<TabKey>('teachers')
+  const [activeTab, setActiveTab] = useState<TabKey>('classes')
   const [generating, setGenerating] = useState(false)
 
   // ── Rooms — local RoomExt state, synced to store ───────────────
@@ -215,11 +215,11 @@ export function StepResourcesV2() {
 
   // ── Counts + readiness ────────────────────────────────────────
   const counts = useMemo<Record<TabKey, number>>(() => ({
-    teachers: staff.length,
     classes:  sections.length,
     subjects: subjects.length,
+    teachers: staff.length,
     rooms:    rooms.length,
-  }), [staff, sections, subjects, rooms])
+  }), [sections, subjects, staff, rooms])
 
   const allReady = counts.classes > 0 && counts.subjects > 0 &&
                    counts.teachers > 0 && counts.rooms > 0
@@ -248,10 +248,10 @@ export function StepResourcesV2() {
   }
 
   const AI_BANNER: Record<TabKey, string> = {
-    teachers: `${counts.teachers} teachers · assign subject expertise and class teacher roles`,
-    classes:  `${counts.classes} classes · set home rooms and review class teacher assignments`,
-    subjects: `${counts.subjects} subjects · map each subject to the classes that require it`,
-    rooms:    `${counts.rooms} rooms · map rooms to subjects and review home class assignments`,
+    classes:  `${counts.classes} classes · click any cell to edit inline, use Bulk Create to generate a full grade`,
+    subjects: `${counts.subjects} subjects · click Applicable Classes to assign which classes take each subject`,
+    teachers: `${counts.teachers} teachers · assign subject expertise and class teacher roles inline`,
+    rooms:    `${counts.rooms} rooms · assign home classes and map special subjects to rooms`,
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -415,6 +415,19 @@ export function StepResourcesV2() {
               </div>
 
               {/* Panels — all mounted, visibility toggled to preserve state */}
+              <div style={{ flex: 1, minHeight: 0, display: activeTab === 'classes' ? 'flex' : 'none', flexDirection: 'column' }}>
+                <ClassesPanel
+                  sections={sections}
+                  setSections={setSections}
+                />
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: activeTab === 'subjects' ? 'flex' : 'none', flexDirection: 'column' }}>
+                <SubjectsPanel
+                  subjects={subjects}
+                  setSubjects={setSubjects}
+                  sections={sections}
+                />
+              </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'teachers' ? 'flex' : 'none', flexDirection: 'column' }}>
                 <TeachersPanel
                   staff={staff}
@@ -423,27 +436,12 @@ export function StepResourcesV2() {
                   subjects={subjects}
                 />
               </div>
-              <div style={{ flex: 1, minHeight: 0, display: activeTab === 'classes' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <ClassesPanel
-                  sections={sections}
-                  setSections={setSections}
-                  rooms={rooms}
-                  staff={staff}
-                />
-              </div>
-              <div style={{ flex: 1, minHeight: 0, display: activeTab === 'subjects' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <SubjectsPanel
-                  subjects={subjects}
-                  setSubjects={setSubjects}
-                  sections={sections}
-                  staff={staff}
-                />
-              </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'rooms' ? 'flex' : 'none', flexDirection: 'column' }}>
                 <RoomsPanel
                   rooms={rooms}
                   setRooms={setRooms}
                   sections={sections}
+                  setSections={setSections}
                   subjects={subjects}
                 />
               </div>
