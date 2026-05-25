@@ -176,9 +176,6 @@ function ExportDropdown({ onCsv, onExcel }: { onCsv: () => void; onExcel: () => 
   )
 }
 
-// Marching ants stroke colour (module-level constant, no hook deps)
-const MARCH_COLOR = '#1A1A2E'
-
 // ─────────────────────────────────────────────────────────────────
 // Grid styles
 // ─────────────────────────────────────────────────────────────────
@@ -358,41 +355,36 @@ const GRID_STYLES = `
   background: #C8C4E8; border-radius: 3px;
 }
 
-/* ── Marching ants (copy mode) ─────────────────────────────────
-   Cells in a copied range use CSS custom properties to draw ONLY
-   their outer edges, forming ONE continuous animated rectangle.
+/* ── Marching ants overlay (copy mode) ──────────────────────────
+   A single absolutely-positioned <div class="march-overlay-rect">
+   is rendered PER RANGE above the grid — no per-cell class toggling.
 
-   --mc-t/r/b/l are set per-cell via JS to the stroke colour when
-   that edge is on the outer boundary, or "transparent" when the
-   adjacent cell is also inside the range (internal edge hidden).
+   This mirrors the Excel / Google Sheets architecture:
+     grid cells  →  passive render only (no selection border)
+     overlay div →  one complete animated rectangle per range
 
-   This gives Excel / Google Sheets "marching ants" appearance:
-   a single animated dashed rectangle around the whole selection,
-   with no internal grid lines between adjacent copied cells.
+   Benefits over per-cell border approach:
+     • Sparse / non-adjacent selections each get their own clean rect
+     • No internal edge suppression hacks needed
+     • Horizontal and vertical selections are rendered identically
+     • Zero DOM-class churn on cells during copy state
    ──────────────────────────────────────────────────────────── */
 @keyframes ag-march {
   from { background-position: 0 0,     100% 0,     100% 100%,   0 100%; }
   to   { background-position: 10px 0,  100% 10px,  calc(100% - 10px) 100%,  0 calc(100% - 10px); }
 }
-.ag-alloc-wrap .ag-cell.ag-cell-copy-march {
-  position: relative;
-}
-.ag-alloc-wrap .ag-cell.ag-cell-copy-march::before {
-  content: '';
+.march-overlay-rect {
   position: absolute;
-  inset: 0;
   pointer-events: none;
-  z-index: 4;
-  /* Each gradient uses its CSS var (color or "transparent") so only
-     outer-edge gradients are visible — inner edges stay transparent. */
+  /* All four edges always drawn — each rect represents a complete boundary */
   background-image:
-    repeating-linear-gradient(90deg,  var(--mc-t,transparent) 0, var(--mc-t,transparent) 5px, transparent 5px, transparent 10px),
-    repeating-linear-gradient(180deg, var(--mc-r,transparent) 0, var(--mc-r,transparent) 5px, transparent 5px, transparent 10px),
-    repeating-linear-gradient(90deg,  var(--mc-b,transparent) 0, var(--mc-b,transparent) 5px, transparent 5px, transparent 10px),
-    repeating-linear-gradient(180deg, var(--mc-l,transparent) 0, var(--mc-l,transparent) 5px, transparent 5px, transparent 10px);
+    repeating-linear-gradient(90deg,  #1A1A2E 0, #1A1A2E 5px, transparent 5px, transparent 10px),
+    repeating-linear-gradient(180deg, #1A1A2E 0, #1A1A2E 5px, transparent 5px, transparent 10px),
+    repeating-linear-gradient(90deg,  #1A1A2E 0, #1A1A2E 5px, transparent 5px, transparent 10px),
+    repeating-linear-gradient(180deg, #1A1A2E 0, #1A1A2E 5px, transparent 5px, transparent 10px);
   background-size:     10px 1.5px, 1.5px 10px, 10px 1.5px, 1.5px 10px;
-  background-position: 0 0, 100% 0, 100% 100%, 0 100%;
-  background-repeat:   repeat-x, repeat-y, repeat-x, repeat-y;
+  background-position: 0 0,        100% 0,      100% 100%,   0 100%;
+  background-repeat:   repeat-x,   repeat-y,    repeat-x,    repeat-y;
   animation: ag-march 0.45s linear infinite;
 }
 `
@@ -452,6 +444,14 @@ export function AllocationGridAG({
   // Skip sibling sync + batch refresh during paste operations
   const isPastingRef = useRef(false)
 
+  // ── Overlay marching ants state ───────────────────────────────
+  // One rect per copied range, positioned absolutely above the grid.
+  // Stored as pixel coords relative to the .ag-alloc-wrap wrapper.
+  type MarchRect = { left: number; top: number; width: number; height: number }
+  const [marchRects, setMarchRects] = useState<MarchRect[]>([])
+  // Keep the last set of AG Grid ranges so we can recompute on scroll
+  const marchRangesRef = useRef<any[] | null>(null)
+
   // ── UI state ─────────────────────────────────────────────────
   const [quickFilter, setQuickFilter] = useState('')
   const [statusBar, setStatusBar] = useState<{ cells: number; periods: number; avg: number } | null>(null)
@@ -473,147 +473,94 @@ export function AllocationGridAG({
     getPeriodMinutes: () => periodMinRef.current,
   }), [])
 
-  // ── Marching ants — synchronous, edge-aware DOM walk ─────────
+  // ── Marching ants — overlay architecture ─────────────────────
   //
-  // Architecture:
-  //   • Build a Map of  key → { t, r, b, l }  from AG Grid's range data.
-  //     key = "rowIndex||colId"  (double-pipe avoids : ambiguity in colIds)
-  //     Edge flags indicate which of the 4 sides sit on the outer boundary.
+  // Excel / Google Sheets render selection borders as absolutely-
+  // positioned overlay rectangles ABOVE the grid, not as per-cell
+  // CSS classes.  We do the same:
   //
-  //   • Single querySelectorAll walk — reads real DOM attributes via
-  //     getAttribute() (no CSS selector construction, no special-char risk).
-  //     classList.toggle + setProperty atomically adds/removes class AND
-  //     CSS custom properties in one pass.
+  //   1. computeMarchRects — converts AG Grid CellRange[] into pixel
+  //      bounding-box rects (relative to the wrapper div) by reading
+  //      each selected cell's getBoundingClientRect().  One rect per
+  //      range: sparse Ctrl+Click selections each get their own rect.
   //
-  //   • Each cell gets only the edge gradients for its outer sides, so the
-  //     whole selection renders as ONE continuous rectangle (not per-cell boxes).
+  //   2. applyMarchingAnts — stores ranges in marchRangesRef, then
+  //      calls setMarchRects(computeMarchRects(ranges)) to update
+  //      React state.  The JSX overlay renders <div.march-overlay-rect>
+  //      for each rect — a complete animated dashed rectangle on ALL
+  //      4 edges.  No edge-suppression logic needed.
   //
-  //   • Fully synchronous — caller already scheduled one rAF; a second rAF
-  //     would let AG Grid's post-copy cell refresh recreate DOM nodes after
-  //     we've toggled them (causing wrong-cell highlights on the next frame).
+  //   3. clearMarchingAnts — setMarchRects([]).
+  //
+  //   4. onBodyScroll — recomputes overlay rects whenever the grid
+  //      scrolls so ants stay aligned with the moving cells.
 
-  const applyMarchingAnts = useCallback((ranges: any[] | null | undefined) => {
+  const computeMarchRects = useCallback((ranges: any[] | null | undefined): MarchRect[] => {
     const gridEl = wrapperRef.current
-    if (!gridEl) return
-    const api = gridRef.current?.api
-    if (!api) return
+    if (!gridEl || !ranges?.length) return []
 
-    // ── 1. Build edge maps ────────────────────────────────────────
-    //
-    // Two parallel maps for fault-tolerant cell identification:
-    //   edgeByColId   — keyed by "rowIdx||colId"   (primary: exact string match)
-    //   edgeByDispIdx — keyed by "rowIdx||#dispIdx" (fallback: display-column index)
-    //
-    // The fallback guards against col-id attribute mismatches (e.g. AG Grid
-    // internal shadow copies of pinned columns, special-char encoding).
-    // With ensureDomOrder={true}, DOM cell order == display column order, so
-    // a per-row running counter correctly maps to getAllDisplayedColumns() indices.
-    type Edges = { t: boolean; r: boolean; b: boolean; l: boolean }
+    const wrapRect = gridEl.getBoundingClientRect()
+    const out: MarchRect[] = []
 
-    const allDisplayedCols  = (api.getAllDisplayedColumns() ?? []) as any[]
-    const colIdToDispIdx    = new Map<string, number>()
-    allDisplayedCols.forEach((col: any, i: number) => colIdToDispIdx.set(col.getColId(), i))
-
-    const edgeByColId   = new Map<string, Edges>()   // primary:  "rowIdx||colId"
-    const edgeByDispIdx = new Map<string, Edges>()   // fallback: "rowIdx||#dispIdx"
-
-    ranges?.forEach((range: any) => {
+    ranges.forEach((range: any) => {
       if (!range.startRow || !range.endRow) return
-      const r0    = Math.min(range.startRow.rowIndex, range.endRow.rowIndex)
-      const r1    = Math.max(range.startRow.rowIndex, range.endRow.rowIndex)
-      const cols  = range.columns as any[]   // in display order, left → right
-      const cLast = cols.length - 1
+      const r0   = Math.min(range.startRow.rowIndex, range.endRow.rowIndex)
+      const r1   = Math.max(range.startRow.rowIndex, range.endRow.rowIndex)
+      const cols = range.columns as any[]
 
-      cols.forEach((col: any, ci: number) => {
-        const colId   = col.getColId() as string
-        const dispIdx = colIdToDispIdx.get(colId) ?? -1
+      let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity
+      let hit  = false
 
+      cols.forEach((col: any) => {
+        const colId = col.getColId() as string
         for (let ri = r0; ri <= r1; ri++) {
-          const edges: Edges = {
-            t: ri === r0,
-            b: ri === r1,
-            l: ci === 0,
-            r: ci === cLast,
-          }
-
-          // Primary map (colId key)
-          const ck   = `${ri}||${colId}`
-          const prev = edgeByColId.get(ck)
-          edgeByColId.set(ck, {
-            t: (prev?.t ?? false) || edges.t,
-            b: (prev?.b ?? false) || edges.b,
-            l: (prev?.l ?? false) || edges.l,
-            r: (prev?.r ?? false) || edges.r,
-          })
-
-          // Fallback map (display index key)
-          if (dispIdx >= 0) {
-            const dk    = `${ri}||#${dispIdx}`
-            const prevD = edgeByDispIdx.get(dk)
-            edgeByDispIdx.set(dk, {
-              t: (prevD?.t ?? false) || edges.t,
-              b: (prevD?.b ?? false) || edges.b,
-              l: (prevD?.l ?? false) || edges.l,
-              r: (prevD?.r ?? false) || edges.r,
-            })
-          }
+          // AG Grid may render two .ag-row[row-index=N] elements for the same
+          // row (one in the pinned-left container, one in the center-body).
+          // We walk both so pinned subject columns are found correctly.
+          // getAttribute() comparison is safe for any colId (colons, spaces, etc.)
+          gridEl.querySelectorAll<HTMLElement>(`.ag-row[row-index="${ri}"]`)
+                .forEach(rowEl => {
+                  rowEl.querySelectorAll<HTMLElement>('.ag-cell').forEach(cell => {
+                    if (cell.getAttribute('col-id') !== colId) return
+                    const r = cell.getBoundingClientRect()
+                    if (r.width === 0 || r.height === 0) return  // virtualised / hidden
+                    minL = Math.min(minL, r.left   - wrapRect.left)
+                    minT = Math.min(minT, r.top    - wrapRect.top)
+                    maxR = Math.max(maxR, r.right  - wrapRect.left)
+                    maxB = Math.max(maxB, r.bottom - wrapRect.top)
+                    hit  = true
+                  })
+                })
         }
       })
+
+      if (hit && isFinite(minL)) {
+        out.push({ left: minL, top: minT, width: maxR - minL, height: maxB - minT })
+      }
     })
 
-    // ── 2. Single DOM pass ────────────────────────────────────────
-    // rowCellCounter tracks how many cells we've seen per row across ALL containers
-    // (pinned + body), accumulating in DOM order.  Since ensureDomOrder={true},
-    // this running index equals the column's position in getAllDisplayedColumns().
-    const rowCellCounter = new Map<string, number>()
-
-    gridEl
-      .querySelectorAll<HTMLElement>('.ag-row[row-index] .ag-cell[col-id]')
-      .forEach(cell => {
-        const rowAttr = cell.parentElement?.getAttribute('row-index')
-                     ?? cell.closest('.ag-row')?.getAttribute('row-index')
-                     ?? ''
-        const colId   = cell.getAttribute('col-id') ?? ''
-
-        // Increment per-row running counter (display-index fallback)
-        const cnt = rowCellCounter.get(rowAttr) ?? 0
-        rowCellCounter.set(rowAttr, cnt + 1)
-
-        // Primary lookup by colId; fallback by display index
-        const ck    = `${rowAttr}||${colId}`
-        const dk    = `${rowAttr}||#${cnt}`
-        const edges = edgeByColId.get(ck) ?? edgeByDispIdx.get(dk)
-
-        if (edges) {
-          cell.classList.add('ag-cell-copy-march')
-          cell.style.setProperty('--mc-t', edges.t ? MARCH_COLOR : 'transparent')
-          cell.style.setProperty('--mc-r', edges.r ? MARCH_COLOR : 'transparent')
-          cell.style.setProperty('--mc-b', edges.b ? MARCH_COLOR : 'transparent')
-          cell.style.setProperty('--mc-l', edges.l ? MARCH_COLOR : 'transparent')
-        } else {
-          cell.classList.remove('ag-cell-copy-march')
-          cell.style.removeProperty('--mc-t')
-          cell.style.removeProperty('--mc-r')
-          cell.style.removeProperty('--mc-b')
-          cell.style.removeProperty('--mc-l')
-        }
-      })
+    return out
   }, [])
 
+  const applyMarchingAnts = useCallback((ranges: any[] | null | undefined) => {
+    marchRangesRef.current = ranges ?? null
+    setMarchRects(computeMarchRects(ranges))
+  }, [computeMarchRects])
+
   const clearMarchingAnts = useCallback(() => {
-    wrapperRef.current
-      ?.querySelectorAll<HTMLElement>('.ag-cell-copy-march')
-      .forEach(cell => {
-        cell.classList.remove('ag-cell-copy-march')
-        cell.style.removeProperty('--mc-t')
-        cell.style.removeProperty('--mc-r')
-        cell.style.removeProperty('--mc-b')
-        cell.style.removeProperty('--mc-l')
-      })
+    marchRangesRef.current = null
+    setMarchRects([])
   }, [])
 
   // Keep ref in sync so useMemo closures can call latest clearMarchingAnts
   clearMarchingAntsRef.current = clearMarchingAnts
+
+  // Recompute overlay rects when the grid body scrolls so ants follow the cells
+  const onBodyScroll = useCallback(() => {
+    if (marchRangesRef.current) {
+      setMarchRects(computeMarchRects(marchRangesRef.current))
+    }
+  }, [computeMarchRects])
 
   // ── defaultColDef — stable ────────────────────────────────────
   const defaultColDef = useMemo<ColDef<RowData>>(() => ({
@@ -1073,7 +1020,8 @@ export function AllocationGridAG({
       </div>
 
       {/* ── AG Grid ── */}
-      <div className="ag-theme-quartz" style={{ height: gridHeight, width: '100%', border: '1px solid #C8C8C8', borderTop: 'none', overflow: 'hidden' }}>
+      {/* position:relative makes this the containing block for the march overlay */}
+      <div className="ag-theme-quartz" style={{ height: gridHeight, width: '100%', border: '1px solid #C8C8C8', borderTop: 'none', overflow: 'hidden', position: 'relative' }}>
         <AgGridReact<RowData>
           ref={gridRef}
           rowData={rowData}
@@ -1112,10 +1060,28 @@ export function AllocationGridAG({
           processDataFromClipboard={processDataFromClipboard}
           onCellSelectionChanged={onCellSelectionChanged}
           onCellKeyDown={onCellKeyDown}
+          onBodyScroll={onBodyScroll}
 
           tooltipShowDelay={500}
           tooltipHideDelay={3000}
         />
+
+        {/* ── Marching ants overlay ─────────────────────────────────
+            Absolutely positioned above the grid — one <div> per copied
+            range.  Sparse Ctrl+Click selections render as independent
+            rectangles with no shared-edge artifacts.  pointerEvents:none
+            ensures zero interference with grid mouse interactions.       */}
+        {marchRects.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5, overflow: 'hidden' }}>
+            {marchRects.map((rect, i) => (
+              <div
+                key={i}
+                className="march-overlay-rect"
+                style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Status bar ── */}
