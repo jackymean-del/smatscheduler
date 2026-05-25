@@ -21,7 +21,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { Staff, Section, Subject } from '@/types'
 import { Trash2, Plus, Copy, ChevronRight, ChevronDown, X } from 'lucide-react'
-import { P, TH, TD, InlineChipSelect } from './shared'
+import { P, P_D, P_L, P_B, TH, TD, TABLE_CARD, InlineChipSelect } from './shared'
 import type { ChipOption } from './shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -53,11 +53,11 @@ function getMappings(t: StaffExt): SubjectMapping[] {
 function Avatar({ name }: { name: string }) {
   return (
     <div style={{
-      width: 30, height: 30, borderRadius: '50%',
-      background: '#ede9ff', color: P,
+      width: 28, height: 28, borderRadius: '50%',
+      background: P_L, color: P_D,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 11, fontWeight: 800, flexShrink: 0,
-      border: '1.5px solid #dbd5ff', letterSpacing: '0.02em',
+      fontSize: 10.5, fontWeight: 800, flexShrink: 0,
+      border: '1.5px solid rgba(124,111,224,0.28)', letterSpacing: '0.02em',
     }}>
       {initials(name) || '?'}
     </div>
@@ -269,12 +269,12 @@ function SubjectLine({ mapping, subjectColor, classOpts, onUpdate, onRemove }: {
 }) {
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5,
-      borderLeft: `2px solid ${subjectColor}88`,
-      paddingLeft: 7, marginBottom: 4,
+      display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4,
+      borderLeft: `2px solid ${subjectColor}99`,
+      paddingLeft: 6, marginBottom: 3,
       minHeight: 20,
     }}>
-      <span style={{ fontSize: 11.5, fontWeight: 700, color: '#1a1a2e', minWidth: 56, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#111028', minWidth: 52, maxWidth: 96, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {mapping.subject}
       </span>
       <InlineChipSelect
@@ -347,17 +347,19 @@ function SubjectAssignmentCell({ teacher, subjects, classOpts, onUpdateMappings 
           setShowAdd(true)
         }}
         style={{
-          display: 'inline-flex', alignItems: 'center', gap: 3,
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: showAdd ? P : '#c0b8f0',
-          fontSize: 11, fontWeight: 700, padding: '2px 0',
-          marginTop: mappings.length > 0 ? 3 : 0,
-          transition: 'color 0.15s',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          background: showAdd ? P : P_L,
+          border: `1px solid ${showAdd ? P : P_B}`,
+          borderRadius: 5, color: showAdd ? '#fff' : P_D,
+          fontSize: 11, fontWeight: 700,
+          padding: '2px 8px',
+          marginTop: mappings.length > 0 ? 4 : 0,
+          cursor: 'pointer', transition: 'all 0.12s',
         }}
-        onMouseEnter={e => (e.currentTarget.style.color = P)}
-        onMouseLeave={e => (e.currentTarget.style.color = showAdd ? P : '#c0b8f0')}
+        onMouseEnter={e => { if (!showAdd) { e.currentTarget.style.background = '#DDD8FF'; e.currentTarget.style.borderColor = P } }}
+        onMouseLeave={e => { if (!showAdd) { e.currentTarget.style.background = P_L; e.currentTarget.style.borderColor = P_B } }}
       >
-        <Plus size={11} /> Subject
+        <Plus size={10} /> Subject
       </button>
       {showAdd && anchor && (
         <AddSubjectFlow
@@ -374,25 +376,25 @@ function SubjectAssignmentCell({ teacher, subjects, classOpts, onUpdateMappings 
 
 // ─── Expanded details row ─────────────────────────────────────────────────────
 const fld: React.CSSProperties = {
-  padding: '4px 7px', border: '1px solid #e0dcff', borderRadius: 5,
-  fontSize: 12, color: '#1a1a2e', outline: 'none', fontFamily: 'inherit', background: '#fff',
+  padding: '3px 7px', border: '1px solid #E4E0FF', borderRadius: 5,
+  fontSize: 12, color: '#111028', outline: 'none', fontFamily: 'inherit', background: '#FAFAFE',
 }
 function ExpandedDetails({ t, onChange }: { t: Staff; onChange: (p: Partial<Staff>) => void }) {
   return (
-    <div style={{ display: 'flex', gap: 14, padding: '10px 60px', background: '#faf9ff', borderTop: '1px solid #f0eeff', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#666', fontWeight: 600 }}>
+    <div style={{ display: 'flex', gap: 12, padding: '8px 52px', background: '#FAFAFE', borderTop: '1px solid #EEE9FF', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#6B6891', fontWeight: 600 }}>
         Role
         <select value={t.role ?? 'Teacher'} onChange={e => onChange({ role: e.target.value })} style={fld}>
           {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#666', fontWeight: 600 }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#6B6891', fontWeight: 600 }}>
         Gender
         <select value={t.gender ?? ''} onChange={e => onChange({ gender: e.target.value as any })} style={fld}>
           {GENDERS.map(g => <option key={g} value={g}>{g || '— not set —'}</option>)}
         </select>
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#666', fontWeight: 600 }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#6B6891', fontWeight: 600 }}>
         Max periods / week
         <input type="number" value={t.maxPeriodsPerWeek ?? 30} min={1} max={50}
           onChange={e => onChange({ maxPeriodsPerWeek: +e.target.value })}
@@ -415,13 +417,13 @@ function NameCell({ value, onSave }: { value: string; onSave: (v: string) => voi
     <input ref={ref} value={t} onChange={ev => setT(ev.target.value)}
       onBlur={commit}
       onKeyDown={ev => { if (ev.key === 'Enter') commit(); if (ev.key === 'Escape') { setT(value); setE(false) } }}
-      style={{ ...fld, width: 150, fontSize: 13, fontWeight: 600 }}
+      style={{ ...fld, width: 150, fontSize: 12.5, fontWeight: 600 }}
     />
   )
   return (
     <span onClick={() => setE(true)} title="Click to edit"
-      style={{ cursor: 'text', fontSize: 13, fontWeight: 600, color: '#1a1a2e', padding: '2px 3px', borderRadius: 3, display: 'inline-block' }}
-      onMouseEnter={ev => (ev.currentTarget.style.background = '#f0eeff')}
+      style={{ cursor: 'text', fontSize: 12.5, fontWeight: 600, color: '#111028', padding: '2px 3px', borderRadius: 3, display: 'inline-block' }}
+      onMouseEnter={ev => (ev.currentTarget.style.background = '#F0ECFE')}
       onMouseLeave={ev => (ev.currentTarget.style.background = '')}
     >{value}</span>
   )
@@ -440,26 +442,26 @@ function AddRow({ onAdd }: { onAdd: (t: StaffExt) => void }) {
   }
   if (!active) return (
     <tr>
-      <td colSpan={4} style={{ ...TD, padding: '10px 14px' }}>
+      <td colSpan={4} style={{ ...TD, padding: '9px 12px' }}>
         <button onClick={() => setActive(true)}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: '1px dashed #d0ccff', borderRadius: 6, color: P, fontSize: 12, fontWeight: 700, padding: '5px 12px', cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: '1px dashed #C8C2F0', borderRadius: 6, color: P, fontSize: 12, fontWeight: 600, padding: '4px 11px', cursor: 'pointer' }}>
           <Plus size={13} /> Add Teacher
         </button>
       </td>
     </tr>
   )
   return (
-    <tr style={{ background: '#faf9ff' }}>
+    <tr style={{ background: '#FAFAFE' }}>
       <td colSpan={2} style={TD}>
         <input ref={ref} value={name} onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setActive(false) }}
           placeholder="Teacher full name"
-          style={{ ...fld, width: 220, fontSize: 13 }}
+          style={{ ...fld, width: 220, fontSize: 12.5 }}
         />
       </td>
       <td colSpan={2} style={{ ...TD, whiteSpace: 'nowrap' }}>
-        <button onClick={commit} style={{ background: P, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginRight: 6 }}>✓ Add</button>
-        <button onClick={() => setActive(false)} style={{ background: '#f0f0f0', color: '#888', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 12, cursor: 'pointer' }}>✗</button>
+        <button onClick={commit} style={{ background: P, color: '#fff', border: 'none', borderRadius: 5, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginRight: 5 }}>✓ Add</button>
+        <button onClick={() => setActive(false)} style={{ background: '#F0F0F0', color: '#888', border: 'none', borderRadius: 5, padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>✗</button>
       </td>
     </tr>
   )
@@ -491,25 +493,25 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
   return (
     <>
       <tr
-        style={{ verticalAlign: 'top' }}
-        onMouseEnter={e => (e.currentTarget.style.background = '#fafbff')}
+        style={{ verticalAlign: 'top', transition: 'background 0.08s' }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#F8F6FF')}
         onMouseLeave={e => (e.currentTarget.style.background = '')}
       >
         {/* Name + avatar */}
-        <td style={{ ...TD, padding: '10px 14px', whiteSpace: 'nowrap' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+        <td style={{ ...TD, padding: '7px 12px', whiteSpace: 'nowrap' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
             <Avatar name={t.name} />
             <div style={{ minWidth: 0 }}>
               <NameCell value={t.name} onSave={v => onUpdate({ name: v })} />
               {t.role && t.role !== 'Teacher' && (
-                <div style={{ fontSize: 10, color: '#a09cc4', marginTop: 1, fontWeight: 600, letterSpacing: '0.02em' }}>{t.role}</div>
+                <div style={{ fontSize: 10, color: '#9896B5', marginTop: 1, fontWeight: 600, letterSpacing: '0.02em' }}>{t.role}</div>
               )}
             </div>
           </div>
         </td>
 
         {/* Subject assignments */}
-        <td style={{ ...TD, padding: '9px 12px' }}>
+        <td style={{ ...TD, padding: '7px 10px' }}>
           <SubjectAssignmentCell
             teacher={t}
             subjects={subjects}
@@ -519,7 +521,7 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
         </td>
 
         {/* Class teacher (single select) */}
-        <td style={{ ...TD, padding: '10px 12px', width: 140 }}>
+        <td style={{ ...TD, padding: '7px 10px', width: 140 }}>
           <InlineChipSelect
             selected={isClassTeacherOf ? [isClassTeacherOf] : []}
             options={classTeacherOpts}
@@ -532,31 +534,31 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
         </td>
 
         {/* Actions */}
-        <td style={{ ...TD, padding: '9px 12px', textAlign: 'right', whiteSpace: 'nowrap', width: 90 }}>
+        <td style={{ ...TD, padding: '7px 10px', textAlign: 'right', whiteSpace: 'nowrap', width: 84 }}>
           <button
             onClick={() => setExpanded(o => !o)}
             title="Details"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: expanded ? P : '#c8c0f0', borderRadius: 4, marginRight: 1 }}
-            onMouseEnter={e => { (e.currentTarget.style.background = '#f0eeff'); (e.currentTarget.style.color = P) }}
-            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = expanded ? P : '#c8c0f0') }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: expanded ? P : '#D4CFF0', borderRadius: 4, marginRight: 1 }}
+            onMouseEnter={e => { (e.currentTarget.style.background = P_L); (e.currentTarget.style.color = P) }}
+            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = expanded ? P : '#D4CFF0') }}
           >
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
           <button
             onClick={onDuplicate}
             title="Duplicate"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: '#c8c0f0', borderRadius: 4, marginRight: 1 }}
-            onMouseEnter={e => { (e.currentTarget.style.background = '#f0eeff'); (e.currentTarget.style.color = P) }}
-            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = '#c8c0f0') }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: '#D4CFF0', borderRadius: 4, marginRight: 1 }}
+            onMouseEnter={e => { (e.currentTarget.style.background = P_L); (e.currentTarget.style.color = P) }}
+            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = '#D4CFF0') }}
           >
             <Copy size={13} />
           </button>
           <button
             onClick={onDelete}
             title="Delete"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: '#e0d5ff', borderRadius: 4 }}
-            onMouseEnter={e => { (e.currentTarget.style.background = '#fff0f0'); (e.currentTarget.style.color = '#e74c3c') }}
-            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = '#e0d5ff') }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 4px', color: '#D4CFF0', borderRadius: 4 }}
+            onMouseEnter={e => { (e.currentTarget.style.background = '#FFF0F0'); (e.currentTarget.style.color = '#e74c3c') }}
+            onMouseLeave={e => { (e.currentTarget.style.background = ''); (e.currentTarget.style.color = '#D4CFF0') }}
           >
             <Trash2 size={13} />
           </button>
@@ -628,39 +630,39 @@ export function TeachersPanel({ staff, setStaff, sections, subjects }: {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        paddingBottom: 12, borderBottom: '2px solid #f0eeff', flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 8,
+        paddingBottom: 8, borderBottom: '1px solid #EEE9FF', flexShrink: 0,
       }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
-          <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#bbb', pointerEvents: 'none', fontSize: 14 }}>⌕</span>
+        <div style={{ position: 'relative', flex: 1, maxWidth: 320 }}>
+          <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: '#C0BBD8', pointerEvents: 'none', fontSize: 13 }}>⌕</span>
           <input
             value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search teachers, subjects…"
-            style={{ width: '100%', padding: '7px 10px 7px 30px', border: '1px solid #e4deff', borderRadius: 7, fontSize: 13, color: '#1a1a2e', outline: 'none', boxSizing: 'border-box', background: '#faf9ff' }}
+            style={{ width: '100%', padding: '5px 10px 5px 27px', border: '1px solid #E4E0FF', borderRadius: 6, fontSize: 12.5, color: '#111028', outline: 'none', boxSizing: 'border-box', background: '#FAFAFE', fontFamily: 'inherit' }}
           />
         </div>
-        <div style={{ fontSize: 12, color: '#9b95cc', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 11, color: '#9896B5', fontWeight: 600, marginLeft: 'auto' }}>
           {staff.length} teacher{staff.length !== 1 ? 's' : ''}
           {search && filtered.length !== staff.length && ` · ${filtered.length} shown`}
-        </div>
+        </span>
       </div>
 
       {/* Table */}
-      <div style={{ flex: 1, overflowY: 'auto', marginTop: 10 }}>
+      <div style={TABLE_CARD}>
         {staff.length === 0 && !search ? (
-          <div style={{ textAlign: 'center', padding: '56px 0' }}>
-            <div style={{ fontSize: 38, marginBottom: 10 }}>👤</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#9b95cc', marginBottom: 5 }}>No teachers yet</div>
-            <div style={{ fontSize: 12, color: '#c0b8e8' }}>Add teachers, then assign subjects and classes to them.</div>
+          <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>👤</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#9896B5', marginBottom: 4 }}>No teachers yet</div>
+            <div style={{ fontSize: 12, color: '#C4C0DC' }}>Add teachers, then assign subjects and classes to them.</div>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ background: '#f7f5ff' }}>
-                <th style={{ ...TH, width: 200 }}>Teacher</th>
+              <tr>
+                <th style={{ ...TH, width: 190 }}>Teacher</th>
                 <th style={TH}>Subject Assignments</th>
-                <th style={{ ...TH, width: 150 }}>Class Teacher Of</th>
-                <th style={{ ...TH, width: 90 }} />
+                <th style={{ ...TH, width: 145 }}>Class Teacher Of</th>
+                <th style={{ ...TH, width: 84 }} />
               </tr>
             </thead>
             <tbody>
@@ -678,7 +680,7 @@ export function TeachersPanel({ staff, setStaff, sections, subjects }: {
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={4} style={{ ...TD, textAlign: 'center', color: '#bbb', padding: '24px' }}>
+                  <td colSpan={4} style={{ ...TD, textAlign: 'center', color: '#C4C0DC', padding: '20px 12px' }}>
                     No teachers match "{search}"
                   </td>
                 </tr>

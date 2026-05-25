@@ -1,18 +1,18 @@
 /**
- * Step 2 — Resources  (v4, relationship-panel edition)
+ * Step 2 — Resources  (premium compact redesign)
  *
  * Layout:
- *   ┌─ Left sidebar ─────────┬─ Content area ─────────────────────────────┐
- *   │  👤 Teachers      84   │  [Panel — relationship-driven UX]           │
- *   │  🎓 Classes       52   │                                             │
- *   │  📖 Subjects      38   │                                             │
- *   │  🏫 Rooms         60   │                                             │
- *   │  [Readiness]           │                                             │
- *   └────────────────────────┴────────────────────────────────────────────┘
- *   [← Step 1]   Step 2 of 5 · All 4 resource types required   [Next →]
+ *   ┌─ Sidebar (172px) ──────┬─ Content area ──────────────────────────────┐
+ *   │  Classes          52   │  [Panel — inline editing, no drawers]        │
+ *   │  Subjects         38   │                                              │
+ *   │  Teachers         84   │                                              │
+ *   │  Rooms            60   │                                              │
+ *   │  [Readiness]           │                                              │
+ *   │  [Regenerate]          │                                              │
+ *   └────────────────────────┴─────────────────────────────────────────────┘
+ *   [← Step 1]   Step 2 of 5                               [Next: Allocation →]
  *
- * Tab order:  Classes → Subjects → Teachers → Rooms
- * Each tab renders a relationship-driven panel (side-drawer UX).
+ * Tab order: Classes → Subjects → Teachers → Rooms
  */
 
 import { useState, useEffect, useMemo } from 'react'
@@ -30,14 +30,18 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2,
 } from 'lucide-react'
 
-// ─── Types ────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 type TabKey = 'classes' | 'subjects' | 'teachers' | 'rooms'
 
+const P   = '#7C6FE0'
+const P_D = '#6358C4'
+const P_L = '#EDE9FF'
+
 const TAB_META: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'classes',  label: 'Classes',  icon: <GraduationCap size={15} /> },
-  { key: 'subjects', label: 'Subjects', icon: <BookOpen size={15} /> },
-  { key: 'teachers', label: 'Teachers', icon: <Users size={15} /> },
-  { key: 'rooms',    label: 'Rooms',    icon: <Building2 size={15} /> },
+  { key: 'classes',  label: 'Classes',  icon: <GraduationCap size={14} /> },
+  { key: 'subjects', label: 'Subjects', icon: <BookOpen size={14} /> },
+  { key: 'teachers', label: 'Teachers', icon: <Users size={14} /> },
+  { key: 'rooms',    label: 'Rooms',    icon: <Building2 size={14} /> },
 ]
 
 const GRADE_GROUP: Record<string, string> = {
@@ -52,7 +56,7 @@ const DEFAULT_STRENGTH: Record<string, number> = {
   'Secondary': 45, 'Sr. Secondary': 40,
 }
 
-// ─── Default data builders ────────────────────────────────────────
+// ─── Default data builders ────────────────────────────────────────────────────
 function buildDefaultSections(): Section[] {
   const out: Section[] = []
   const push = (grade: string, sec: string) =>
@@ -113,7 +117,7 @@ function buildDefaultSubjects(): Subject[] {
     id: makeId(), name: d.name, periodsPerWeek: d.ppw,
     category: d.cat as any, isOptional: false,
     shortName: d.name.slice(0, 6), sessionDuration: 45, maxPeriodsPerDay: 2,
-    requiresLab: false, color: '#7C6FE0', sections: [], classConfigs: [],
+    requiresLab: false, color: P, sections: [], classConfigs: [],
   } as unknown as Subject))
 }
 
@@ -142,7 +146,7 @@ function buildDefaultStaff(count: number): Staff[] {
   return generateStaff('school', 'IN', count) as Staff[]
 }
 
-// ─── Main component ───────────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────────────────
 export function StepResourcesV2() {
   const store       = useTimetableStore() as any
   const { config, sections, staff, subjects, setSections, setStaff, setBreaks, setStep } = store
@@ -151,7 +155,7 @@ export function StepResourcesV2() {
   const [activeTab, setActiveTab] = useState<TabKey>('classes')
   const [generating, setGenerating] = useState(false)
 
-  // ── Rooms — local RoomExt state, synced to store ───────────────
+  // ── Rooms ─────────────────────────────────────────────────────────────────
   const [rooms, setRoomsLocal] = useState<RoomExt[]>(() => {
     const stored = store.rooms ?? []
     if (Array.isArray(stored) && stored.length > 0) {
@@ -189,31 +193,20 @@ export function StepResourcesV2() {
     })))
   }, [rooms]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-generate breaks if empty
   useEffect(() => {
     if ((store.breaks ?? []).length === 0)
       setBreaks(generateBreaks(config.orgType ?? 'school', config.numBreaks ?? 3))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Scope popover ─────────────────────────────────────────────
-  const [scopeTarget, setScopeTarget] = useState<{
-    kind: string; entity: any; rect?: DOMRect
-  } | null>(null)
-
-  const workDays: string[] = config?.workDays ??
-    ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY']
+  // ── Scope modal ───────────────────────────────────────────────────────────
+  const [scopeTarget, setScopeTarget] = useState<{ kind: string; entity: any; rect?: DOMRect } | null>(null)
+  const workDays: string[] = config?.workDays ?? ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY']
   const periods = store.periods ?? []
-
   const cycleWeeks = (() => {
-    try {
-      const raw = localStorage.getItem('schedu-bell-v2')
-      if (!raw) return 1
-      const p = JSON.parse(raw)
-      return typeof p?.cycleWeeks === 'number' ? p.cycleWeeks : 1
-    } catch { return 1 }
+    try { const p = JSON.parse(localStorage.getItem('schedu-bell-v2') ?? '{}'); return typeof p?.cycleWeeks === 'number' ? p.cycleWeeks : 1 } catch { return 1 }
   })()
 
-  // ── Counts + readiness ────────────────────────────────────────
+  // ── Counts + readiness ────────────────────────────────────────────────────
   const counts = useMemo<Record<TabKey, number>>(() => ({
     classes:  sections.length,
     subjects: subjects.length,
@@ -221,13 +214,10 @@ export function StepResourcesV2() {
     rooms:    rooms.length,
   }), [sections, subjects, staff, rooms])
 
-  const allReady = counts.classes > 0 && counts.subjects > 0 &&
-                   counts.teachers > 0 && counts.rooms > 0
+  const allReady = counts.classes > 0 && counts.subjects > 0 && counts.teachers > 0 && counts.rooms > 0
+  const hasAnyData = counts.classes > 0 || counts.subjects > 0 || counts.teachers > 0 || counts.rooms > 0
 
-  const hasAnyData = counts.classes > 0 || counts.subjects > 0 ||
-                     counts.teachers > 0 || counts.rooms > 0
-
-  // ── Generate all ───────────────────────────────────────────────
+  // ── Generate all ──────────────────────────────────────────────────────────
   const handleGenerateAll = async () => {
     setGenerating(true)
     await new Promise(r => setTimeout(r, 700))
@@ -247,36 +237,40 @@ export function StepResourcesV2() {
     setGenerating(false)
   }
 
-  const AI_BANNER: Record<TabKey, string> = {
-    classes:  `${counts.classes} classes · click any cell to edit inline, use Bulk Create to generate a full grade`,
-    subjects: `${counts.subjects} subjects · click Applicable Classes to assign which classes take each subject`,
-    teachers: `${counts.teachers} teachers · assign subject expertise and class teacher roles inline`,
-    rooms:    `${counts.rooms} rooms · assign home classes and map special subjects to rooms`,
+  const BANNER_TEXT: Record<TabKey, string> = {
+    classes:  `${counts.classes} classes · edit inline, bulk-create full grades`,
+    subjects: `${counts.subjects} subjects · set p/w and assign to classes`,
+    teachers: `${counts.teachers} teachers · assign subjects with class mappings inline`,
+    rooms:    `${counts.rooms} rooms · assign home classes and special subjects`,
   }
 
-  // ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{
       display: 'flex', minHeight: 'calc(100vh - 165px)',
       fontFamily: "'Inter', -apple-system, sans-serif",
+      background: '#FAFAFE',
     }}>
 
-      {/* ══ Left sidebar ══════════════════════════════════════ */}
+      {/* ══ Sidebar ══════════════════════════════════════════════════════════ */}
       <div style={{
-        width: 192, flexShrink: 0,
-        background: '#fff', borderRight: '1px solid #E5E7EB',
-        padding: '18px 0',
+        width: 172, flexShrink: 0,
+        background: '#fff', borderRight: '1px solid #EAE6FF',
+        padding: '14px 0 16px',
         position: 'sticky', top: 0,
         height: 'calc(100vh - 165px)', overflowY: 'auto',
+        display: 'flex', flexDirection: 'column',
       }}>
+        {/* Section label */}
         <div style={{
-          padding: '0 16px 10px',
-          fontSize: 10, fontWeight: 800, letterSpacing: '0.1em',
-          textTransform: 'uppercase', color: '#9CA3AF',
+          padding: '0 14px 8px',
+          fontSize: 9.5, fontWeight: 800, letterSpacing: '0.1em',
+          textTransform: 'uppercase', color: '#B0ABCC',
         }}>
           Resource Types
         </div>
 
+        {/* Nav items */}
         {TAB_META.map(tab => {
           const active = activeTab === tab.key
           const count  = counts[tab.key]
@@ -286,24 +280,27 @@ export function StepResourcesV2() {
               onClick={() => setActiveTab(tab.key)}
               style={{
                 width: '100%', textAlign: 'left', border: 'none',
-                cursor: 'pointer', padding: '9px 16px',
-                background: active ? '#F5F2FF' : 'transparent',
-                borderRight: active ? '2.5px solid #7C6FE0' : '2.5px solid transparent',
-                display: 'flex', alignItems: 'center', gap: 10,
+                cursor: 'pointer', padding: '7px 14px',
+                background: active ? '#F3F0FF' : 'transparent',
+                borderRight: `2.5px solid ${active ? P : 'transparent'}`,
+                display: 'flex', alignItems: 'center', gap: 8,
                 fontFamily: 'inherit', transition: 'background 0.1s',
-              }}>
-              <span style={{ color: active ? '#7C6FE0' : ready ? '#6B7280' : '#D1D5DB', display: 'flex' }}>
+              }}
+              onMouseEnter={e => { if (!active) (e.currentTarget.style.background = '#F9F7FF') }}
+              onMouseLeave={e => { if (!active) (e.currentTarget.style.background = 'transparent') }}
+            >
+              <span style={{ color: active ? P : ready ? '#8B87AD' : '#D1CFF0', display: 'flex', flexShrink: 0 }}>
                 {tab.icon}
               </span>
-              <span style={{ flex: 1, fontSize: 13, fontWeight: active ? 600 : 400, color: active ? '#7C6FE0' : '#374151' }}>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: active ? 700 : 500, color: active ? P : '#374151' }}>
                 {tab.label}
               </span>
               {ready ? (
                 <span style={{
-                  fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10,
-                  background: active ? '#7C6FE0' : '#F3F4F6',
-                  color: active ? '#fff' : '#6B7280',
-                  minWidth: 24, textAlign: 'center',
+                  fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 9,
+                  background: active ? P : '#F0ECFE',
+                  color: active ? '#fff' : '#8B87AD',
+                  minWidth: 22, textAlign: 'center',
                 }}>{count}</span>
               ) : (
                 <span style={{ fontSize: 10, color: '#FCA5A5', fontWeight: 600 }}>—</span>
@@ -312,27 +309,28 @@ export function StepResourcesV2() {
           )
         })}
 
-        {/* Readiness card */}
+        {/* Readiness */}
         <div style={{
-          margin: '16px 12px 0', padding: '10px 12px',
-          background: '#FAFAFE', borderRadius: 8, border: '1px solid #E8E4FF',
+          margin: '14px 10px 0', padding: '9px 11px',
+          background: '#FAFAFE', borderRadius: 7, border: '1px solid #EAE6FF',
         }}>
           <div style={{
             fontSize: 9, fontWeight: 800, letterSpacing: '0.1em',
-            textTransform: 'uppercase', color: '#8B87AD', marginBottom: 8,
+            textTransform: 'uppercase', color: '#B0ABCC', marginBottom: 7,
           }}>
             Readiness
           </div>
           {TAB_META.map(tab => {
             const ok = counts[tab.key] > 0
             return (
-              <div key={tab.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+              <div key={tab.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, cursor: 'pointer' }}
+                onClick={() => setActiveTab(tab.key)}>
                 <div style={{
-                  width: 12, height: 12, borderRadius: '50%',
+                  width: 11, height: 11, borderRadius: '50%',
                   background: ok ? '#22C55E' : '#E5E7EB',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                 }}>
-                  {ok && <CheckCircle2 size={8} color="#fff" />}
+                  {ok && <CheckCircle2 size={7} color="#fff" />}
                 </div>
                 <span style={{ fontSize: 11, color: ok ? '#16A34A' : '#9CA3AF', fontWeight: ok ? 600 : 400 }}>
                   {tab.label}
@@ -341,25 +339,50 @@ export function StepResourcesV2() {
             )
           })}
         </div>
+
+        {/* Regenerate all — in sidebar */}
+        {hasAnyData && (
+          <div style={{ margin: '10px 10px 0' }}>
+            <button
+              onClick={handleGenerateAll}
+              disabled={generating}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                padding: '6px 10px', borderRadius: 6, border: 'none',
+                background: generating ? '#E8E4FF' : P,
+                color: generating ? '#B4ADDD' : '#fff',
+                fontSize: 11, fontWeight: 700, cursor: generating ? 'default' : 'pointer',
+                fontFamily: 'inherit', transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { if (!generating) (e.currentTarget.style.background = P_D) }}
+              onMouseLeave={e => { if (!generating) (e.currentTarget.style.background = P) }}
+            >
+              <RefreshCw size={11} style={generating ? { animation: 'spin 1s linear infinite' } : {}} />
+              {generating ? 'Generating…' : 'Regenerate All'}
+            </button>
+          </div>
+        )}
+
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
       </div>
 
-      {/* ══ Content area ══════════════════════════════════════ */}
+      {/* ══ Content area ═════════════════════════════════════════════════════ */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-        <div style={{ flex: 1, padding: '20px 24px 8px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, padding: '14px 20px 6px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
-          {/* ── Empty state ─────────────────────────────── */}
+          {/* ── Empty state ───────────────────────────────────────────────── */}
           {!hasAnyData && (
-            <div style={{ maxWidth: 560, margin: '40px auto 0', textAlign: 'center' }}>
+            <div style={{ maxWidth: 520, margin: '32px auto 0', textAlign: 'center' }}>
               <div style={{
-                width: 64, height: 64, borderRadius: 16, background: '#EDE9FF',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+                width: 56, height: 56, borderRadius: 14, background: P_L,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px',
               }}>
-                <Sparkles size={28} color="#7C6FE0" />
+                <Sparkles size={24} color={P} />
               </div>
-              <h2 style={{ fontSize: 20, fontWeight: 800, color: '#13111E', margin: '0 0 8px', letterSpacing: '-0.3px' }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: '#0F0E1A', margin: '0 0 7px', letterSpacing: '-0.3px' }}>
                 AI-generate your school resources
               </h2>
-              <p style={{ fontSize: 13, color: '#6B7280', margin: '0 0 28px', lineHeight: 1.6 }}>
+              <p style={{ fontSize: 12.5, color: '#6B7280', margin: '0 0 24px', lineHeight: 1.6 }}>
                 One click generates 52 classes (Nursery–XII), 84 teachers, 38 subjects and 60 rooms —
                 with subject expertise, class teacher assignments, and room mappings pre-filled.
               </p>
@@ -367,89 +390,60 @@ export function StepResourcesV2() {
                 onClick={handleGenerateAll}
                 disabled={generating}
                 style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 8,
-                  padding: '13px 28px', borderRadius: 10, border: 'none',
-                  background: generating ? '#D8D2FF' : 'linear-gradient(135deg, #7C6FE0, #9B8EF5)',
-                  color: '#fff', fontSize: 14, fontWeight: 700,
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  padding: '11px 24px', borderRadius: 8, border: 'none',
+                  background: generating ? '#D8D2FF' : P,
+                  color: '#fff', fontSize: 13, fontWeight: 700,
                   cursor: generating ? 'default' : 'pointer', fontFamily: 'inherit',
-                  boxShadow: generating ? 'none' : '0 4px 12px rgba(124,111,224,0.35)',
-                }}>
+                  boxShadow: generating ? 'none' : '0 4px 14px rgba(124,111,224,0.38)',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => { if (!generating) { (e.currentTarget.style.background = P_D); (e.currentTarget.style.boxShadow = '0 4px 18px rgba(99,88,196,0.45)') } }}
+                onMouseLeave={e => { if (!generating) { (e.currentTarget.style.background = P); (e.currentTarget.style.boxShadow = '0 4px 14px rgba(124,111,224,0.38)') } }}
+              >
                 {generating
-                  ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Generating…</>
-                  : <><Sparkles size={14} /> AI Generate All Resources</>
+                  ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Generating…</>
+                  : <><Sparkles size={13} /> AI Generate All Resources</>
                 }
               </button>
-              <p style={{ fontSize: 11, color: '#9CA3AF', marginTop: 12 }}>
+              <p style={{ fontSize: 11, color: '#9CA3AF', marginTop: 10 }}>
                 Or switch to a tab and use <strong>+ Add</strong> to enter data manually.
               </p>
-              <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
             </div>
           )}
 
-          {/* ── Panel view ───────────────────────────────── */}
+          {/* ── Panel view ─────────────────────────────────────────────────── */}
           {hasAnyData && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              {/* Banner */}
+              {/* Slim context banner */}
               <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '9px 14px', borderRadius: 8,
-                background: '#F5F2FF', border: '1px solid #E0D9FF',
-                marginBottom: 16, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 12px', marginBottom: 10, flexShrink: 0,
+                background: '#F3F0FF', borderRadius: 6, border: '1px solid #E8E4FF',
               }}>
-                <Sparkles size={13} color="#7C6FE0" style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: 12, color: '#4B5275', lineHeight: 1.4, flex: 1 }}>
-                  <strong style={{ color: '#13111E' }}>{AI_BANNER[activeTab]}</strong>
-                  {' '}· Click any row to open its editor drawer.
+                <span style={{ fontSize: 11.5, color: '#5B52C4', fontWeight: 500 }}>
+                  {BANNER_TEXT[activeTab]}
                 </span>
-                <button
-                  onClick={handleGenerateAll}
-                  disabled={generating}
-                  style={{
-                    flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5,
-                    padding: '5px 11px', borderRadius: 6, border: 'none',
-                    background: '#7C6FE0', color: '#fff',
-                    fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                  }}>
-                  <RefreshCw size={11} /> Regenerate all
-                </button>
               </div>
 
-              {/* Panels — all mounted, visibility toggled to preserve state */}
+              {/* Panels — all mounted, toggled via display */}
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'classes' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <ClassesPanel
-                  sections={sections}
-                  setSections={setSections}
-                />
+                <ClassesPanel sections={sections} setSections={setSections} />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'subjects' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <SubjectsPanel
-                  subjects={subjects}
-                  setSubjects={setSubjects}
-                  sections={sections}
-                />
+                <SubjectsPanel subjects={subjects} setSubjects={setSubjects} sections={sections} />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'teachers' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <TeachersPanel
-                  staff={staff}
-                  setStaff={setStaff}
-                  sections={sections}
-                  subjects={subjects}
-                />
+                <TeachersPanel staff={staff} setStaff={setStaff} sections={sections} subjects={subjects} />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'rooms' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <RoomsPanel
-                  rooms={rooms}
-                  setRooms={setRooms}
-                  sections={sections}
-                  setSections={setSections}
-                  subjects={subjects}
-                />
+                <RoomsPanel rooms={rooms} setRooms={setRooms} sections={sections} setSections={setSections} subjects={subjects} />
               </div>
             </div>
           )}
         </div>
 
-        {/* ── Scope popover — retained for programmatic/future use ── */}
+        {/* Scope modal */}
         {scopeTarget && (
           <ScopeMatrixModal
             entityName={scopeTarget.entity.name ?? scopeTarget.entity.actualName ?? '—'}
@@ -468,64 +462,52 @@ export function StepResourcesV2() {
             }
             onSave={(nextScope, selectedIds) => {
               const k = scopeTarget.kind
-              if (k === 'Section')
-                setSections(sections.map((s: Section) =>
-                  s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
-              else if (k === 'Subject')
-                setSubjects(subjects.map((s: Subject) =>
-                  s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
-              else if (k === 'Teacher')
-                setStaff(staff.map((t: Staff) =>
-                  t.id === scopeTarget.entity.id ? { ...t, scope: nextScope } : t))
-              else if (k === 'Room')
-                setRooms(rooms.map(r =>
-                  r.id === scopeTarget.entity.id ? { ...r, scope: nextScope } : r))
-              else if (k === 'BulkSection')
-                setSections(sections.map((s: Section) =>
-                  (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
-              else if (k === 'BulkSubject')
-                setSubjects(subjects.map((s: Subject) =>
-                  (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
-              else if (k === 'BulkTeacher')
-                setStaff(staff.map((t: Staff) =>
-                  (!selectedIds || selectedIds.includes(t.id)) ? { ...t, scope: nextScope } : t))
-              else if (k === 'BulkRoom')
-                setRooms(rooms.map(r =>
-                  (!selectedIds || selectedIds.includes(r.id)) ? { ...r, scope: nextScope } : r))
+              if (k === 'Section')       setSections(sections.map((s: Section) => s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
+              else if (k === 'Subject')  setSubjects(subjects.map((s: Subject) => s.id === scopeTarget.entity.id ? { ...s, scope: nextScope } : s))
+              else if (k === 'Teacher')  setStaff(staff.map((t: Staff) => t.id === scopeTarget.entity.id ? { ...t, scope: nextScope } : t))
+              else if (k === 'Room')     setRooms(rooms.map(r => r.id === scopeTarget.entity.id ? { ...r, scope: nextScope } : r))
+              else if (k === 'BulkSection')  setSections(sections.map((s: Section) => (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
+              else if (k === 'BulkSubject')  setSubjects(subjects.map((s: Subject) => (!selectedIds || selectedIds.includes(s.id)) ? { ...s, scope: nextScope } : s))
+              else if (k === 'BulkTeacher')  setStaff(staff.map((t: Staff) => (!selectedIds || selectedIds.includes(t.id)) ? { ...t, scope: nextScope } : t))
+              else if (k === 'BulkRoom')     setRooms(rooms.map(r => (!selectedIds || selectedIds.includes(r.id)) ? { ...r, scope: nextScope } : r))
             }}
             onClose={() => setScopeTarget(null)}
           />
         )}
 
-        {/* ══ Bottom navigation bar ════════════════════════ */}
+        {/* ══ Bottom nav ═══════════════════════════════════════════════════ */}
         <div style={{
           position: 'sticky', bottom: 0,
-          background: '#fff', borderTop: '1px solid #E5E7EB',
-          padding: '10px 24px',
+          background: '#fff', borderTop: '1px solid #EAE6FF',
+          padding: '9px 20px',
           display: 'flex', alignItems: 'center', gap: 12,
           zIndex: 10,
         }}>
           <button
             onClick={() => setStep(1)}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              padding: '8px 16px', borderRadius: 8,
-              border: '1px solid #E5E7EB', background: '#fff',
-              color: '#4B5275', fontSize: 12, fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 14px', borderRadius: 7,
+              border: '1px solid #E4E0FF', background: '#fff',
+              color: '#5B52C4', fontSize: 12, fontWeight: 600,
               cursor: 'pointer', fontFamily: 'inherit',
-            }}>
-            <ChevronLeft size={14} /> Step 1
+              transition: 'background 0.1s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = P_L)}
+            onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+          >
+            <ChevronLeft size={13} /> Step 1
           </button>
 
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>Step 2 of 5</span>
+            <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>Step 2 of 5</span>
             {!allReady && (
-              <span style={{ fontSize: 12, color: '#EA580C', marginLeft: 10, fontWeight: 500 }}>
+              <span style={{ fontSize: 11.5, color: '#EA580C', marginLeft: 10, fontWeight: 600 }}>
                 · All 4 resource types required before proceeding
               </span>
             )}
             {allReady && (
-              <span style={{ fontSize: 12, color: '#16A34A', marginLeft: 10, fontWeight: 500 }}>
+              <span style={{ fontSize: 11.5, color: '#16A34A', marginLeft: 10, fontWeight: 600 }}>
                 · All resources ready ✓
               </span>
             )}
@@ -535,18 +517,20 @@ export function StepResourcesV2() {
             onClick={() => setStep(3)}
             disabled={!allReady}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              padding: '8px 18px', borderRadius: 8, border: 'none',
-              background: allReady
-                ? 'linear-gradient(135deg, #7C6FE0, #9B8EF5)'
-                : '#E8E4FF',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 7, border: 'none',
+              background: allReady ? P : '#E8E4FF',
               color: allReady ? '#fff' : '#B8B4D4',
               fontSize: 12, fontWeight: 700,
               cursor: allReady ? 'pointer' : 'not-allowed',
               fontFamily: 'inherit',
-              boxShadow: allReady ? '0 2px 8px rgba(124,111,224,0.35)' : 'none',
-            }}>
-            Next: Allocation <ChevronRight size={14} />
+              boxShadow: allReady ? '0 2px 10px rgba(124,111,224,0.32)' : 'none',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { if (allReady) (e.currentTarget.style.background = P_D) }}
+            onMouseLeave={e => { if (allReady) (e.currentTarget.style.background = P) }}
+          >
+            Next: Allocation <ChevronRight size={13} />
           </button>
         </div>
       </div>
