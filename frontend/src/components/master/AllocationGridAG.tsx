@@ -412,13 +412,22 @@ export function AllocationGridAG({
         if (!range.startRow || !range.endRow) return
         const r0 = Math.min(range.startRow.rowIndex, range.endRow.rowIndex)
         const r1 = Math.max(range.startRow.rowIndex, range.endRow.rowIndex)
+        // ── DEBUG: log range columns vs DOM col-ids ──────────────
+        const rangeColIds = (range.columns as any[]).map((c: any) => c.getColId())
+        const sampleRow = gridEl.querySelector(`.ag-row[row-index="${r0}"]`)
+        const domColIds = sampleRow
+          ? Array.from(sampleRow.querySelectorAll('.ag-cell[col-id]')).map(el => el.getAttribute('col-id'))
+          : []
+        console.log('[march] range cols from API:', rangeColIds)
+        console.log('[march] DOM col-ids in row', r0, ':', domColIds)
+        // ────────────────────────────────────────────────────────
         ;(range.columns as any[]).forEach((col: any) => {
           const colId = col.getColId() as string
           for (let i = r0; i <= r1; i++) {
-            // Quoted attribute value is taken literally — : / spaces are all fine
             const cell = gridEl.querySelector(
               `.ag-row[row-index="${i}"] .ag-cell[col-id="${colId}"]`
             )
+            console.log('[march] col="' + colId + '" row=' + i + ' found:', !!cell)
             cell?.classList.add('ag-cell-copy-march')
           }
         })
