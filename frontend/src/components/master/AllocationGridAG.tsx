@@ -394,53 +394,56 @@ export function AllocationGridAG({
     getPeriodMinutes: () => periodMinRef.current,
   }), [])
 
-  // ── Marching ants — direct DOM class manipulation ────────────
-  // Uses AG Grid's own range data + precise per-cell querySelector so no
-  // intermediate Set or scan-all-cells pass. Each query is exact:
-  //   .ag-row[row-index="N"] .ag-cell[col-id="subj:Full Name"]
-  // Attribute selectors treat the value literally — no special-char issues.
+  // ── Marching ants — synchronous DOM walk ─────────────────────
+  // Strategy: build a Set of "rowIndex||colId" targets from the AG Grid
+  // range data, then walk EVERY rendered cell in one querySelectorAll pass
+  // and classList.toggle each one atomically.
+  //
+  // Why NOT querySelector(".ag-cell[col-id='...']"):
+  //   • querySelector returns the FIRST match — pinned-column copies of a
+  //     cell (same col-id) can shadow the scrollable body cell.
+  //   • CSS selector strings with `:` (colIds like "subj:English") work in
+  //     attribute-value context but remain fragile across AG Grid versions.
+  //
+  // Why synchronous (no inner rAF):
+  //   The caller already schedules one rAF so the DOM is painted; an extra
+  //   rAF frame lets AG Grid's post-copy refresh run and potentially
+  //   recreate cell elements AFTER we've toggled them.
   const applyMarchingAnts = useCallback((ranges: any[] | null | undefined) => {
-    requestAnimationFrame(() => {
-      const gridEl = wrapperRef.current
-      if (!gridEl) return
-      // Remove old classes
-      gridEl.querySelectorAll('.ag-cell-copy-march').forEach(
-        el => el.classList.remove('ag-cell-copy-march')
-      )
-      if (!ranges?.length) return
-      ranges.forEach((range: any) => {
-        if (!range.startRow || !range.endRow) return
-        const r0 = Math.min(range.startRow.rowIndex, range.endRow.rowIndex)
-        const r1 = Math.max(range.startRow.rowIndex, range.endRow.rowIndex)
-        // ── DEBUG: log range columns vs DOM col-ids ──────────────
-        const rangeColIds = (range.columns as any[]).map((c: any) => c.getColId())
-        const sampleRow = gridEl.querySelector(`.ag-row[row-index="${r0}"]`)
-        const domColIds = sampleRow
-          ? Array.from(sampleRow.querySelectorAll('.ag-cell[col-id]')).map(el => el.getAttribute('col-id'))
-          : []
-        console.log('[march] range cols from API:', rangeColIds)
-        console.log('[march] DOM col-ids in row', r0, ':', domColIds)
-        // ────────────────────────────────────────────────────────
-        ;(range.columns as any[]).forEach((col: any) => {
-          const colId = col.getColId() as string
-          for (let i = r0; i <= r1; i++) {
-            const cell = gridEl.querySelector(
-              `.ag-row[row-index="${i}"] .ag-cell[col-id="${colId}"]`
-            )
-            console.log('[march] col="' + colId + '" row=' + i + ' found:', !!cell)
-            cell?.classList.add('ag-cell-copy-march')
-          }
-        })
+    const gridEl = wrapperRef.current
+    if (!gridEl) return
+
+    // Build target set: "rowIndex||colId" — double-pipe avoids ambiguity
+    // with colIds that contain a single colon (e.g. "subj:English").
+    const targets = new Set<string>()
+    ranges?.forEach((range: any) => {
+      if (!range.startRow || !range.endRow) return
+      const r0 = Math.min(range.startRow.rowIndex, range.endRow.rowIndex)
+      const r1 = Math.max(range.startRow.rowIndex, range.endRow.rowIndex)
+      ;(range.columns as any[]).forEach((col: any) => {
+        const colId = col.getColId() as string
+        for (let ri = r0; ri <= r1; ri++) {
+          targets.add(`${ri}||${colId}`)
+        }
       })
     })
+
+    // Single DOM pass — toggle class on every cell atomically.
+    // getAttribute() reads the real DOM attribute; no selector parsing.
+    gridEl.querySelectorAll<HTMLElement>('.ag-row[row-index] .ag-cell[col-id]')
+      .forEach(cell => {
+        const rowIndex = (cell.closest('.ag-row') as HTMLElement | null)
+          ?.getAttribute('row-index') ?? ''
+        const colId    = cell.getAttribute('col-id') ?? ''
+        cell.classList.toggle('ag-cell-copy-march', targets.has(`${rowIndex}||${colId}`))
+      })
   }, [])
 
+  // Synchronous — no rAF so callers in suppressKeyboardEvent / event
+  // handlers don't race with subsequent AG Grid re-renders.
   const clearMarchingAnts = useCallback(() => {
-    requestAnimationFrame(() => {
-      wrapperRef.current?.querySelectorAll('.ag-cell-copy-march').forEach(
-        el => el.classList.remove('ag-cell-copy-march')
-      )
-    })
+    wrapperRef.current?.querySelectorAll('.ag-cell-copy-march')
+      .forEach(el => el.classList.remove('ag-cell-copy-march'))
   }, [])
 
   // Keep ref in sync so useMemo closures can call latest clearMarchingAnts
@@ -682,12 +685,11 @@ export function AllocationGridAG({
     const ctrl = ke.ctrlKey || ke.metaKey
 
     if (ctrl && key === 'c') {
-      // rAF: let AG Grid process the copy first, then read the resulting ranges
-      requestAnimationFrame(() => {
-        const api = gridRef.current?.api
-        if (!api) return
-        applyMarchingAnts(api.getCellRanges())
-      })
+      // Capture ranges NOW — synchronously, before AG Grid's internal copy
+      // handler runs (which could modify or re-set the cell ranges).
+      // Then apply ants in ONE rAF so the DOM is stable.
+      const ranges = (e.api ?? gridRef.current?.api)?.getCellRanges()
+      requestAnimationFrame(() => applyMarchingAnts(ranges))
       return
     }
 
