@@ -1,5 +1,5 @@
 # SmartSched v3 — Docker Compose
-# Uses: Go 1.26 API · React 19 frontend · PostgreSQL 17 · Bun (when available)
+# Uses: Go 1.26 API · React 19 frontend · PostgreSQL 17 · Python microservices
 
 services:
   frontend:
@@ -18,9 +18,41 @@ services:
       DATABASE_URL: "postgresql://smartsched:secret@db:5432/smartsched?sslmode=disable"
       ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
       JWT_SECRET: "dev-secret-change-in-production"
+      PDF_EXTRACTOR_URL: "http://pdf-extractor:5001"
+      SYLLABUS_PARSER_URL: "http://syllabus-parser:5002"
+      CURRICULUM_POLL_MINUTES: "60"
     depends_on:
       db: { condition: service_healthy }
+      pdf-extractor: { condition: service_started }
+      syllabus-parser: { condition: service_started }
     restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Curriculum Intelligence Microservices
+  # -------------------------------------------------------------------------
+  pdf-extractor:
+    build: ./services/pdf_extractor
+    ports: ['5001:5001']
+    environment:
+      PORT: "5001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  syllabus-parser:
+    build: ./services/syllabus_parser
+    ports: ['5002:5002']
+    environment:
+      PORT: "5002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5002/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   db:
     image: postgres:17-alpine
@@ -31,6 +63,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/migrations:/docker-entrypoint-initdb.d
+      - ./backend/db/migrations:/docker-entrypoint-initdb.d/curriculum
     ports: ['5432:5432']
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U smartsched"]
