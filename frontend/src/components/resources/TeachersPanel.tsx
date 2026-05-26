@@ -2,7 +2,7 @@
  * TeachersPanel — Tab 3.
  *
  * Unified subject→class mapping: each subject carries its own applicable classes.
- * Table: Teacher | Subject Assignments | Class Teacher Of | [ Show More ] [ Duplicate ] [ Delete ]
+ * Table: Teacher | Subject Assignments | Slots/Wk | Class Teacher Of | [ Show More ] [ Delete ]
  *
  * Subject Assignments cell:
  *   ┃ English   [V-A] [V-B] ✕
@@ -27,6 +27,7 @@ import {
   actionBtn, deleteBtn, outlineBtn,
 } from './shared'
 import type { ChipOption } from './shared'
+import { calcTeacherSlots, slotLoadLevel } from './aiEngine'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface SubjectMapping { subject: string; classes: string[] }
@@ -51,6 +52,15 @@ const GENDERS = ['','female','male','other']
 function getMappings(t: StaffExt): SubjectMapping[] {
   if (t.subjectMappings && t.subjectMappings.length > 0) return t.subjectMappings
   return (t.subjects ?? []).map(s => ({ subject: s, classes: t.classes ?? [] }))
+}
+
+// ─── Load level badge colors ──────────────────────────────────────────────────
+const LOAD_STYLE: Record<ReturnType<typeof slotLoadLevel>, { bg: string; fg: string; border: string }> = {
+  none: { bg: '#F2F1F9', fg: '#9896B5', border: '#E0DCF4' },
+  low:  { bg: '#EEF3FF', fg: '#3B5BDB', border: '#BFD0FF' },
+  good: { bg: '#ECFDF5', fg: '#059669', border: '#A7F3D0' },
+  high: { bg: '#FFF4E6', fg: '#C05621', border: '#FBD38D' },
+  over: { bg: '#FFF1F2', fg: '#C81E4A', border: '#FECDD3' },
 }
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
@@ -281,7 +291,10 @@ function SubjectAssignmentCell({ teacher, subjects, classOpts, onUpdateMappings 
   function updateClasses(i: number, classes: string[]) { const n = [...mappings]; n[i] = { ...n[i], classes }; onUpdateMappings(n) }
 
   return (
-    <div style={{ minWidth: 180 }}>
+    <div style={{ minWidth: 0 }}>
+      {mappings.length === 0 && (
+        <span style={{ fontSize: 11, color: '#C4C0DC', fontStyle: 'italic', paddingLeft: 2 }}>— not assigned —</span>
+      )}
       {mappings.map((m, i) => (
         <SubjectLine key={m.subject + i} mapping={m}
           subjectColor={subjectColorMap[m.subject] ?? P}
@@ -379,7 +392,7 @@ function AddRow({ onAdd }: { onAdd: (t: StaffExt) => void }) {
   }
   if (!active) return (
     <tr>
-      <td colSpan={4} style={{ ...TD, padding: '9px 12px' }}>
+      <td colSpan={5} style={{ ...TD, padding: '9px 12px' }}>
         <button onClick={() => setActive(true)}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: '1px dashed #C8C2F0', borderRadius: 6, color: P, fontSize: 12, fontWeight: 600, padding: '4px 11px', cursor: 'pointer', fontFamily: 'inherit' }}>
           <Plus size={13} /> Add Teacher
@@ -389,7 +402,7 @@ function AddRow({ onAdd }: { onAdd: (t: StaffExt) => void }) {
   )
   return (
     <tr style={{ background: '#FAFAFE' }}>
-      <td colSpan={2} style={TD}>
+      <td colSpan={3} style={TD}>
         <input ref={ref} value={name} onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setActive(false) }}
           placeholder="Teacher full name"
@@ -405,13 +418,12 @@ function AddRow({ onAdd }: { onAdd: (t: StaffExt) => void }) {
 }
 
 // ─── Teacher row ──────────────────────────────────────────────────────────────
-function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDuplicate, onDelete }: {
+function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDelete }: {
   t: StaffExt
   subjects: Subject[]
   classOpts: ChipOption[]
   classTeacherOpts: ChipOption[]
   onUpdate: (p: Partial<StaffExt>) => void
-  onDuplicate: () => void
   onDelete: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -426,6 +438,9 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
   }
 
   const isClassTeacherOf = t.isClassTeacher || ''
+  const slots = calcTeacherSlots(t as any, subjects)
+  const level = slotLoadLevel(slots)
+  const { bg: loadBg, fg: loadFg, border: loadBorder } = LOAD_STYLE[level]
 
   return (
     <>
@@ -452,6 +467,24 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
           <SubjectAssignmentCell teacher={t} subjects={subjects} classOpts={classOpts} onUpdateMappings={updateMappings} />
         </td>
 
+        {/* Slots / Week — color-coded workload badge */}
+        <td style={{ ...TD, padding: '7px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: loadBg, color: loadFg,
+            border: `1px solid ${loadBorder}`,
+            borderRadius: 5, fontSize: 12, fontWeight: 700,
+            padding: '2px 8px', minWidth: 34, letterSpacing: '0.01em',
+          }}>
+            {slots}
+          </span>
+          {level !== 'none' && (
+            <div style={{ fontSize: 9, color: loadFg, opacity: 0.75, marginTop: 1, fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
+              {level === 'low' ? 'low' : level === 'good' ? 'good' : level === 'high' ? 'high' : 'over'}
+            </div>
+          )}
+        </td>
+
         {/* Class teacher (single select) */}
         <td style={{ ...TD, padding: '7px 10px' }}>
           <InlineChipSelect
@@ -465,7 +498,7 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
           />
         </td>
 
-        {/* Actions — always visible text buttons */}
+        {/* Actions */}
         <td style={{ ...TD, padding: '6px 10px', whiteSpace: 'nowrap' }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <button
@@ -482,12 +515,6 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
               }}
             >{expanded ? 'Show Less' : 'Show More'}</button>
             <button
-              onClick={onDuplicate}
-              style={actionBtn}
-              onMouseEnter={e => { e.currentTarget.style.background = P_L; e.currentTarget.style.color = P_D; e.currentTarget.style.borderColor = P_B }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8886A8'; e.currentTarget.style.borderColor = '#DDD8FF' }}
-            >Duplicate</button>
-            <button
               onClick={onDelete}
               style={deleteBtn}
               onMouseEnter={e => { e.currentTarget.style.background = '#FFE4E4' }}
@@ -499,7 +526,7 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, onUpdate, onDupl
 
       {expanded && (
         <tr>
-          <td colSpan={4} style={{ padding: 0 }}>
+          <td colSpan={5} style={{ padding: 0 }}>
             <ExpandedDetails t={t} onChange={onUpdate} />
           </td>
         </tr>
@@ -556,11 +583,6 @@ export function TeachersPanel({ staff, setStaff, sections, subjects }: {
 
   function update(id: string, p: Partial<StaffExt>) {
     setStaff((staff as StaffExt[]).map(t => t.id === id ? { ...t, ...p } : t) as Staff[])
-  }
-
-  function duplicate(t: StaffExt) {
-    const copy: StaffExt = { ...t, id: makeId(), name: t.name + ' (Copy)', isClassTeacher: '' }
-    setStaff([...staff, copy as Staff])
   }
 
   function remove(id: string) { setStaff(staff.filter(t => t.id !== id)) }
@@ -624,15 +646,17 @@ export function TeachersPanel({ staff, setStaff, sections, subjects }: {
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: 200 }} />
+              <col style={{ width: 190 }} />
               <col />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 230 }} />
+              <col style={{ width: 88 }} />
+              <col style={{ width: 145 }} />
+              <col style={{ width: 140 }} />
             </colgroup>
             <thead>
               <tr>
                 <th style={TH}>Teacher</th>
                 <th style={TH}>Subject Assignments</th>
+                <th style={{ ...TH, textAlign: 'center' }}>Slots/Wk</th>
                 <th style={TH}>Class Teacher Of</th>
                 <th style={{ ...TH, textAlign: 'right', paddingRight: 10 }}>Actions</th>
               </tr>
@@ -646,13 +670,12 @@ export function TeachersPanel({ staff, setStaff, sections, subjects }: {
                   classOpts={classOpts}
                   classTeacherOpts={classTeacherOpts}
                   onUpdate={p => update(t.id, p)}
-                  onDuplicate={() => duplicate(t)}
                   onDelete={() => remove(t.id)}
                 />
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={4} style={{ ...TD, textAlign: 'center', color: '#C4C0DC', padding: '22px 12px' }}>
+                  <td colSpan={5} style={{ ...TD, textAlign: 'center', color: '#C4C0DC', padding: '22px 12px' }}>
                     No teachers match "{search}"
                   </td>
                 </tr>

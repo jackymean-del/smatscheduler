@@ -15,7 +15,7 @@
  * Tab order: Classes → Subjects → Teachers → Rooms
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import { generateStaff, generateSubjects, generateBreaks } from '@/lib/orgData'
 import type { Section, Subject, Staff } from '@/types'
@@ -26,6 +26,7 @@ import { ClassesPanel }  from '@/components/resources/ClassesPanel'
 import { SubjectsPanel, generateShortName } from '@/components/resources/SubjectsPanel'
 import { suggestSlotsPerWeek, normalizeBoardType, type CurriculumBoard } from '@/components/resources/curriculum'
 import { RoomsPanel, type RoomExt } from '@/components/resources/RoomsPanel'
+import { runAIAssignment, type AISnapshot } from '@/components/resources/aiEngine'
 import {
   Sparkles, Users, BookOpen, Building2, GraduationCap,
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2,
@@ -174,6 +175,59 @@ export function StepResourcesV2() {
 
   const [activeTab, setActiveTab] = useState<TabKey>('classes')
   const [generating, setGenerating] = useState(false)
+
+  // ── Global AI assign state ────────────────────────────────────────────────
+  const [aiLoading,   setAiLoading]   = useState(false)
+  const [aiStatus,    setAiStatus]    = useState('')
+  const [aiSnapshot,  setAiSnapshot]  = useState<AISnapshot | null>(null)
+  const aiAbortRef = useRef(false)
+
+  function sleep(ms: number) { return new Promise<void>(r => setTimeout(r, ms)) }
+
+  async function handleGlobalAIAssign(board: CurriculumBoard) {
+    if (aiLoading) return
+    aiAbortRef.current = false
+    setAiLoading(true)
+
+    // Take a full snapshot for undo
+    setAiSnapshot({ subjects, sections, staff, rooms })
+
+    const steps = [
+      `Applying ${board} curriculum standards...`,
+      `Mapping subjects → grade levels...`,
+      `Calculating ${board} slot allocations...`,
+      `Distributing teacher workloads...`,
+      `Assigning class teachers...`,
+      `Finalizing room mappings...`,
+    ]
+    for (const msg of steps) {
+      if (aiAbortRef.current) break
+      setAiStatus(msg)
+      await sleep(320)
+    }
+    if (aiAbortRef.current) { setAiLoading(false); return }
+
+    const result = runAIAssignment(subjects, sections, staff, rooms, board)
+
+    setSections(result.sections)
+    setSubjects(result.subjects)
+    setStaff(result.staff)
+    setRooms(result.rooms)
+
+    setAiStatus(`✓ ${board} curriculum assigned`)
+    setAiLoading(false)
+    setTimeout(() => setAiStatus(''), 3500)
+  }
+
+  function handleGlobalAIUndo() {
+    if (!aiSnapshot) return
+    setSections(aiSnapshot.sections)
+    setSubjects(aiSnapshot.subjects)
+    setStaff(aiSnapshot.staff)
+    setRooms(aiSnapshot.rooms)
+    setAiSnapshot(null)
+    setAiStatus('')
+  }
 
   // ── Rooms ─────────────────────────────────────────────────────────────────
   const [rooms, setRoomsLocal] = useState<RoomExt[]>(() => {
@@ -443,7 +497,15 @@ export function StepResourcesV2() {
                 <ClassesPanel sections={sections} setSections={setSections} />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'subjects' ? 'flex' : 'none', flexDirection: 'column' }}>
-                <SubjectsPanel subjects={subjects} setSubjects={setSubjects} sections={sections} board={config.board} />
+                <SubjectsPanel
+                  subjects={subjects} setSubjects={setSubjects}
+                  sections={sections} board={config.board}
+                  onGlobalAIAssign={handleGlobalAIAssign}
+                  globalAILoading={aiLoading}
+                  globalAIStatus={aiStatus}
+                  globalAIHasSnapshot={!!aiSnapshot}
+                  onGlobalAIUndo={handleGlobalAIUndo}
+                />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'teachers' ? 'flex' : 'none', flexDirection: 'column' }}>
                 <TeachersPanel staff={staff} setStaff={setStaff} sections={sections} subjects={subjects} />

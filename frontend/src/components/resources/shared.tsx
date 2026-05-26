@@ -45,11 +45,11 @@ export const TD: React.CSSProperties = {
 // ─── Chip ─────────────────────────────────────────────────────────────────────
 export const chipStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 2,
-  background: '#EDE9FF', color: '#5B52C4',
-  borderRadius: 4, padding: '1px 6px 2px',
-  fontSize: 10.5, fontWeight: 600, lineHeight: '14px',
-  border: '1px solid rgba(124,111,224,0.3)', whiteSpace: 'nowrap',
-  maxWidth: 110, overflow: 'hidden',
+  background: '#E8E3FF', color: '#3D35A8',
+  borderRadius: 4, padding: '2px 7px 2px',
+  fontSize: 11, fontWeight: 700, lineHeight: '15px',
+  border: '1px solid rgba(100,85,210,0.35)', whiteSpace: 'nowrap',
+  maxWidth: 120, overflow: 'hidden',
 }
 
 // ─── Button styles ─────────────────────────────────────────────────────────────

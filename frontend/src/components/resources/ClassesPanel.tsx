@@ -11,7 +11,7 @@ import {
   P, P_D, P_L, P_B,
   TH, TD, TABLE_CARD,
   ImportModal, InlineEdit,
-  actionBtn, deleteBtn, outlineBtn, primaryBtn,
+  deleteBtn, outlineBtn, primaryBtn,
 } from './shared'
 
 type SectionExt = Section & { strength?: number }
@@ -178,10 +178,9 @@ function AddRow({ onAdd }: { onAdd: (s: SectionExt) => void }) {
 }
 
 // ─── Section row ──────────────────────────────────────────────────────────────
-function SectionRow({ sec, onUpdate, onDuplicate, onDelete }: {
+function SectionRow({ sec, onUpdate, onDelete }: {
   sec: SectionExt
   onUpdate: (p: Partial<SectionExt>) => void
-  onDuplicate: () => void
   onDelete: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -236,20 +235,12 @@ function SectionRow({ sec, onUpdate, onDuplicate, onDelete }: {
 
       {/* Actions — always visible */}
       <td style={{ ...TD, whiteSpace: 'nowrap' }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <button
-            onClick={onDuplicate}
-            style={actionBtn}
-            onMouseEnter={e => { e.currentTarget.style.background = P_L; e.currentTarget.style.color = P_D; e.currentTarget.style.borderColor = P_B }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8886A8'; e.currentTarget.style.borderColor = '#DDD8FF' }}
-          >Duplicate</button>
-          <button
-            onClick={onDelete}
-            style={deleteBtn}
-            onMouseEnter={e => { e.currentTarget.style.background = '#FFE4E4' }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#FFF0F0' }}
-          >Delete</button>
-        </div>
+        <button
+          onClick={onDelete}
+          style={deleteBtn}
+          onMouseEnter={e => { e.currentTarget.style.background = '#FFE4E4' }}
+          onMouseLeave={e => { e.currentTarget.style.background = '#FFF0F0' }}
+        >Delete</button>
       </td>
     </tr>
   )
@@ -300,11 +291,6 @@ export function ClassesPanel({ sections, setSections }: {
   function remove(id: string) { setSections(sections.filter(s => s.id !== id)) }
   function add(s: SectionExt) { setSections([...sections, s as Section]) }
   function bulkAdd(news: SectionExt[]) { setSections([...sections, ...news.map(s => s as Section)]) }
-  function duplicate(sec: SectionExt) {
-    const copy: SectionExt = { ...sec, id: makeId(), name: sec.name + ' (Copy)', classTeacher: '' }
-    setSections([...sections, copy as Section])
-  }
-
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
@@ -377,7 +363,7 @@ export function ClassesPanel({ sections, setSections }: {
               <col style={{ width: 180 }} />
               <col style={{ width: 100 }} />
               <col />
-              <col style={{ width: 172 }} />
+              <col style={{ width: 88 }} />
             </colgroup>
             <thead>
               <tr>
@@ -408,7 +394,6 @@ export function ClassesPanel({ sections, setSections }: {
                       key={sec.id}
                       sec={sec}
                       onUpdate={p => update(sec.id, p)}
-                      onDuplicate={() => duplicate(sec)}
                       onDelete={() => remove(sec.id)}
                     />
                   ))}
