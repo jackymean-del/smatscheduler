@@ -763,7 +763,7 @@ export function TeachersPanel({ staff, setStaff, sections, subjects, onScopeClic
               <col style={{ width: '25%' }} />  {/* Subject Assignments */}
               <col style={{ width: '9%' }} />   {/* Slots/Wk */}
               <col style={{ width: '17%' }} />  {/* Class Teacher Of */}
-              <col style={{ width: '17%' }} />  {/* Co-Class Teacher */}
+              <col style={{ width: '17%' }} />  {/* Co-Class Teacher Of */}
               <col style={{ width: '20%' }} />  {/* Actions */}
             </colgroup>
             <thead>
@@ -772,8 +772,8 @@ export function TeachersPanel({ staff, setStaff, sections, subjects, onScopeClic
                 <th style={TH}>Subject Assignments</th>
                 <th style={{ ...TH, textAlign: 'center' }}>Slots/Wk</th>
                 <th style={TH}>Class Teacher Of</th>
-                <th style={TH}>Co-Class Teacher</th>
-                <th style={{ ...TH, textAlign: 'right', paddingRight: 10, whiteSpace: 'nowrap' }}>Actions</th>
+                <th style={TH}>Co-Class Teacher Of</th>
+                <th style={{ ...TH, whiteSpace: 'nowrap' }}>Actions</th>
               </tr>
             </thead>
             <tbody>

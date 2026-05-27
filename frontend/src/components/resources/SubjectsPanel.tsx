@@ -571,7 +571,6 @@ function ClassSlotsExpanded({
   onDeleteCategory?:        (cat: string) => void
   extraCats?:               string[]
 }) {
-  const [catMgrAnchor, setCatMgrAnchor] = useState<HTMLElement | null>(null)
   const classes = getAssignedClasses(sub)
 
   if (classes.length === 0) {
@@ -621,25 +620,7 @@ function ClassSlotsExpanded({
             <th style={{ ...thS, textAlign: 'left' }}>Grade</th>
             <th style={{ ...thS, textAlign: 'center' }}>{ALLOCATION_SHORT[unit]}</th>
             <th style={{ ...thS, textAlign: 'center' }}>Max/day</th>
-            <th style={{ ...thS, textAlign: 'left' }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                Category
-                <button
-                  onClick={e => { e.stopPropagation(); setCatMgrAnchor(o => o ? null : e.currentTarget) }}
-                  title="Manage categories"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: catMgrAnchor ? P : '#C4C0DC', padding: '0 1px', lineHeight: 1, display: 'inline-flex', alignItems: 'center', fontFamily: 'inherit', fontSize: 11 }}
-                >⚙</button>
-                {catMgrAnchor && (
-                  <CategoryManager
-                    extraCats={extraCats}
-                    onAdd={onAddCategory}
-                    onDelete={cat => onDeleteCategory?.(cat)}
-                    anchorEl={catMgrAnchor}
-                    onClose={() => setCatMgrAnchor(null)}
-                  />
-                )}
-              </div>
-            </th>
+            <th style={{ ...thS, textAlign: 'left' }}>Category</th>
             <th style={{ ...thS, textAlign: 'center', whiteSpace: 'nowrap' }}>Lab Req.</th>
             <th style={{ borderBottom: '1px solid #E4E0FF' }} />
           </tr>
@@ -1388,7 +1369,7 @@ export function SubjectsPanel({
                 <th style={TH}>Subject</th>
                 <th style={TH}>Short</th>
                 <th style={TH}>Applicable Classes</th>
-                <th style={{ ...TH, textAlign: 'right', paddingRight: 10, whiteSpace: 'nowrap' }}>Actions</th>
+                <th style={{ ...TH, whiteSpace: 'nowrap' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
