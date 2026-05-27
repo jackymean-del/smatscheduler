@@ -8,7 +8,7 @@
  * Tabs: Period allocation · Teacher allocation · Validation
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useTimetableStore } from '@/store/timetableStore'
 import { AllocationGridAG } from '@/components/master/AllocationGridAG'
 import { TeacherAllocationSummary } from '@/components/master/TeacherAllocationSummary'
@@ -45,6 +45,7 @@ export function StepAllocation() {
     setStep, subjectAllocations, teacherAllocations, staff,
     sections, subjects, config, breaks, periods: storePeriods,
   } = store
+  const storeRooms: any[] = (store as any).rooms ?? []
   const [sub, setSub] = useState<Sub>('periods')
   const [displayMode, setDisplayMode] = useState<'periods' | 'hours'>('periods')
   const [showReport, setShowReport] = useState<'periods' | 'teachers' | null>(null)
@@ -110,7 +111,7 @@ export function StepAllocation() {
       if (status === 'light' && c > 0) soft.push(`${sec.name}: only ${u}/${c} periods used — under board minimum`)
     })
 
-    // Teacher allocation checks
+    // Teacher load checks
     ;(staff as Staff[]).forEach(t => {
       const max = (t as any).maxPeriodsPerWeek ?? 40
       let total = 0
@@ -121,8 +122,61 @@ export function StepAllocation() {
       if (total > max) hard.push(`${t.name}: ${total} periods assigned > max ${max}`)
     })
 
+    // Resource-level: subjects with no teacher assigned in period-allocated cells
+    const missingBySubject: Record<string, string[]> = {}
+    ;(sections as Section[]).forEach(sec => {
+      ;(subjects as Subject[]).forEach(s => {
+        const raw = (subjectAllocations as any)?.[sec.name]?.[s.name]
+        if (!raw) return
+        const p = parseAllocation(raw)
+        if (!p.valid || p.weeklyTotal <= 0) return
+        const hasTeacher = (staff as Staff[]).some(t => {
+          const assigned = (teacherAllocations as any)?.[t.name]?.[sec.name]?.[s.name]
+          return typeof assigned === 'number' && assigned > 0
+        })
+        if (!hasTeacher) {
+          if (!missingBySubject[s.name]) missingBySubject[s.name] = []
+          missingBySubject[s.name].push(sec.name)
+        }
+      })
+    })
+    Object.entries(missingBySubject).forEach(([subName, classes]) => {
+      const display = classes.length > 4
+        ? `${classes.slice(0, 4).join(', ')} +${classes.length - 4} more`
+        : classes.join(', ')
+      soft.push(`"${subName}" has no teacher assigned in: ${display} — assign in Resources → Teachers`)
+    })
+
+    // Resource-level: lab subjects but no lab room exists
+    const labSubjects = (subjects as Subject[]).filter(s => !!(s as any).requiresLab)
+    if (labSubjects.length > 0) {
+      const hasLabRoom = storeRooms.some((r: any) => r.type === 'Lab' || r.type === 'Computer Lab')
+      if (!hasLabRoom) {
+        const names = labSubjects.slice(0, 3).map(s => s.name).join(', ')
+        soft.push(`${labSubjects.length} subject${labSubjects.length > 1 ? 's require' : ' requires'} a lab room (${names}${labSubjects.length > 3 ? ' +more' : ''}) — add a Lab room in Resources → Rooms`)
+      }
+    }
+
+    // Resource-level: total period demand vs total teacher capacity
+    let totalPeriodDemand = 0
+    ;(sections as Section[]).forEach(sec => {
+      ;(subjects as Subject[]).forEach(s => {
+        const raw = (subjectAllocations as any)?.[sec.name]?.[s.name]
+        if (!raw) return
+        const p = parseAllocation(raw)
+        if (p.valid) totalPeriodDemand += p.weeklyTotal
+      })
+    })
+    const totalTeacherCapacity = (staff as Staff[]).reduce((sum, t) =>
+      sum + ((t as any).maxPeriodsPerWeek ?? 40), 0)
+    if (totalTeacherCapacity > 0 && totalPeriodDemand > totalTeacherCapacity) {
+      const deficit = totalPeriodDemand - totalTeacherCapacity
+      const approx  = Math.ceil(deficit / 30)
+      soft.push(`Period demand (${totalPeriodDemand}p/wk) exceeds total teacher capacity (${totalTeacherCapacity}p/wk) by ${deficit} — consider adding ~${approx} more teacher${approx > 1 ? 's' : ''}`)
+    }
+
     return { hardConflicts: hard, softWarnings: soft }
-  }, [sections, sectionTotals, cap, staff, teacherAllocations])
+  }, [sections, sectionTotals, cap, staff, teacherAllocations, subjects, subjectAllocations, storeRooms])
 
   // Teacher allocation summary stats
   const teacherStats = useMemo(() => {
@@ -147,26 +201,41 @@ export function StepAllocation() {
     (row: any) => Object.values(row ?? {}).some((v: any) => v && String(v).trim() !== '')
   )
 
-  // Capacity-aware AI fill for periods — scales proportionally so no OVER conflicts
-  const handleAIPeriodSuggest = () => {
+  // ── Derive period allocations from per-class subject configs in Resources ──────
+  // Only assigns subjects that are explicitly mapped to each section, uses
+  // classConfigs[].periodsPerWeek overrides rather than the global default.
+  const derivePeriodsFromResources = useCallback((): Record<string, Record<string, string>> => {
     const next: Record<string, Record<string, string>> = {}
     ;(sections as Section[]).forEach((sec: Section) => {
-      const band = inferBandFromSection(sec.name)
+      const band     = inferBandFromSection(sec.name)
       const capacity = capacityForSection(cap, band)
-      const ideal = (subjects as Subject[])
-        .filter(s => s.periodsPerWeek && s.periodsPerWeek > 0)
-        .map(s => ({ name: s.name, pw: s.periodsPerWeek!, isLab: !!(s as any).requiresLab }))
+      // Only subjects assigned to this section (respect classConfigs from Resources)
+      const assignedSubjects = (subjects as Subject[]).filter(s => {
+        const configs = (s as any).classConfigs as any[] | undefined
+        if (configs && configs.length > 0)
+          return configs.some((c: any) => c.sectionName === sec.name)
+        return ((s as any).sections ?? []).includes(sec.name)
+      })
+      // Per-class period count: classConfigs override → subject default
+      const ideal = assignedSubjects.map(s => {
+        const configs = (s as any).classConfigs as any[] | undefined
+        const cfg     = configs?.find((c: any) => c.sectionName === sec.name)
+        const pw      = cfg?.periodsPerWeek ?? s.periodsPerWeek ?? 0
+        const labCfg  = cfg?.requiresLab
+        const isLab   = labCfg !== undefined ? labCfg : !!(s as any).requiresLab
+        return { name: s.name, pw, isLab }
+      }).filter(s => s.pw > 0)
       if (!ideal.length) return
       const totalIdeal = ideal.reduce((a, s) => a + s.pw, 0)
       const row: Record<string, string> = {}
       if (capacity <= 0 || totalIdeal <= capacity) {
         ideal.forEach(s => { row[s.name] = s.isLab ? `${Math.max(1, s.pw - 1)}+1L` : String(s.pw) })
       } else {
+        // Scale down proportionally — never exceed capacity
         const scale = capacity / totalIdeal
         let allocated = 0
         ideal.forEach((s, i) => {
           const isLast = i === ideal.length - 1
-          // Math.floor guarantees partial allocation never rounds over capacity
           const raw = isLast ? Math.max(0, capacity - allocated) : Math.max(1, Math.floor(s.pw * scale))
           if (raw > 0) row[s.name] = String(raw)
           allocated += raw
@@ -174,8 +243,104 @@ export function StepAllocation() {
       }
       if (Object.keys(row).length) next[sec.name] = row
     })
-    store.setSubjectAllocations?.(next)
-  }
+    return next
+  }, [sections, subjects, cap])
+
+  const handleAIPeriodSuggest = useCallback(() => {
+    store.setSubjectAllocations?.(derivePeriodsFromResources())
+  }, [derivePeriodsFromResources, store])
+
+  // ── Derive teacher allocations — respects subjectMappings set in Resources ────
+  // Pass 1: explicit subjectMappings → 1-to-1 teacher↔subject↔class assignment.
+  // Pass 2: intelligent load-balanced fallback for any uncovered pairs.
+  const handleAITeacherAllocate = useCallback((periodAllocs?: Record<string, Record<string, string>>) => {
+    const allocs  = periodAllocs ?? subjectAllocations ?? {}
+    const next: Record<string, Record<string, Record<string, number>>> = {}
+    const covered = new Set<string>()  // "cls::subject" pairs covered by mappings
+
+    // PASS 1 — use explicit subjectMappings from TeachersPanel (100% accurate)
+    ;(staff as Staff[]).forEach((t: Staff) => {
+      const maps: Array<{ subject: string; classes: string[] }> = ((t as any).subjectMappings ?? [])
+        .filter((m: any) => (m.classes ?? []).length > 0)
+      if (!maps.length) return
+      maps.forEach((m: { subject: string; classes: string[] }) => {
+        m.classes.forEach((cls: string) => {
+          const raw = allocs[cls]?.[m.subject]
+          if (!raw) return
+          const target = parseAllocation(raw).weeklyTotal || 0
+          if (target <= 0) return
+          if (!next[t.name])      next[t.name]      = {}
+          if (!next[t.name][cls]) next[t.name][cls] = {}
+          next[t.name][cls][m.subject] = (next[t.name][cls][m.subject] ?? 0) + target
+          covered.add(`${cls}::${m.subject}`)
+        })
+      })
+    })
+
+    // PASS 2 — intelligent assignment for pairs not covered by explicit mappings
+    const load: Record<string, number> = {}
+    ;(staff as Staff[]).forEach((t: Staff) => {
+      let l = 0
+      const tMap = next[t.name] ?? {}
+      Object.values(tMap).forEach((sMap: any) =>
+        Object.values(sMap ?? {}).forEach((p: any) => { if (typeof p === 'number') l += p })
+      )
+      load[t.name] = l
+    })
+    ;(sections as Section[]).forEach((sec: Section) => {
+      ;(subjects as Subject[]).forEach((s: Subject) => {
+        if (covered.has(`${sec.name}::${s.name}`)) return
+        const raw = allocs[sec.name]?.[s.name]
+        if (!raw) return
+        const target = parseAllocation(raw).weeklyTotal || 0
+        if (target <= 0) return
+        // Confirm subject is actually assigned to this section in Resources
+        const sExt    = s as any
+        const configs = sExt.classConfigs as any[] | undefined
+        const isAssigned = configs?.length
+          ? configs.some((c: any) => c.sectionName === sec.name)
+          : (sExt.sections ?? []).includes(sec.name)
+        if (!isAssigned) return
+        // Find most-available qualified teacher
+        const pool = (staff as Staff[]).filter(t =>
+          (t.subjects ?? []).some((x: string) => x === s.name)
+        )
+        const eligible = pool.length > 0 ? pool : (staff as Staff[])
+        if (!eligible.length) return
+        const maxFn = (t: Staff) => (t as any).maxPeriodsPerWeek ?? 40
+        const withRoom = eligible
+          .filter(t => (load[t.name] ?? 0) + target <= maxFn(t))
+          .sort((a, b) => (load[a.name] ?? 0) - (load[b.name] ?? 0))
+        const chosen = withRoom[0] ?? [...eligible].sort((a, b) =>
+          (load[a.name] ?? 0) - (load[b.name] ?? 0)
+        )[0]
+        if (!next[chosen.name])            next[chosen.name]            = {}
+        if (!next[chosen.name][sec.name])  next[chosen.name][sec.name]  = {}
+        next[chosen.name][sec.name][s.name] = (next[chosen.name][sec.name][s.name] ?? 0) + target
+        load[chosen.name] = (load[chosen.name] ?? 0) + target
+      })
+    })
+    Object.keys(next).forEach(k => { if (!Object.keys(next[k]).length) delete next[k] })
+    store.setTeacherAllocations?.(next)
+  }, [staff, sections, subjects, subjectAllocations, store])
+
+  // ── One-click sync: periods + teachers from Resources in one pass ─────────────
+  const handleSyncFromResources = useCallback(() => {
+    const nextPeriods = derivePeriodsFromResources()
+    store.setSubjectAllocations?.(nextPeriods)
+    handleAITeacherAllocate(nextPeriods)   // passes fresh periods — avoids stale-state race
+  }, [derivePeriodsFromResources, handleAITeacherAllocate, store])
+
+  // ── Auto-derive on first entry if allocations are empty ───────────────────────
+  const autoRanRef = useRef(false)
+  useEffect(() => {
+    if (autoRanRef.current) return
+    autoRanRef.current = true
+    const hasSubs = (subjects as Subject[]).length > 0
+    const hasSecs = (sections as Section[]).length > 0
+    if (!hasAllocations && hasSubs && hasSecs) handleSyncFromResources()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally mount-only — autoRanRef prevents double-fire in StrictMode
 
   // Toolbar extra for the periods tab — thin spreadsheet ribbon
   const periodsToolbarExtra = (
@@ -254,47 +419,19 @@ export function StepAllocation() {
           }}>
             {sub === 'teachers' && (
               <>
-                <AISuggestButton onClick={() => {
-                  const next: Record<string, Record<string, Record<string, number>>> = {}
-                  const load: Record<string, number> = {}
-                  ;(staff as Staff[]).forEach((t: Staff) => { load[t.name] = 0; next[t.name] = {} })
-
-                  ;(sections as Section[]).forEach((sec: Section) => {
-                    ;(subjects as Subject[]).forEach((s: Subject) => {
-                      const raw = subjectAllocations?.[sec.name]?.[s.name]
-                      const target = raw
-                        ? (parseAllocation(raw).weeklyTotal || s.periodsPerWeek || 0)
-                        : (s.periodsPerWeek ?? 0)
-                      if (target <= 0) return
-
-                      // Eligible teachers: qualified for this subject
-                      const pool: Staff[] = (staff as Staff[]).filter((t: Staff) => {
-                        const ts = (t.subjects ?? []) as string[]
-                        return ts.some((x: string) => x === s.name || x === `${(sec as any).grade}::${s.name}`)
-                      })
-                      const eligible = pool.length > 0 ? pool : (staff as Staff[])
-                      if (!eligible.length) return
-
-                      // Pick teacher with most remaining headroom, avoid breaching max
-                      const maxFn = (t: Staff) => (t as any).maxPeriodsPerWeek ?? 40
-                      const withRoom = eligible
-                        .filter(t => (load[t.name] ?? 0) + target <= maxFn(t))
-                        .sort((a, b) => (load[a.name] ?? 0) - (load[b.name] ?? 0))
-                      // Fall back to least-loaded if all are at capacity
-                      const chosen = withRoom[0] ?? [...eligible].sort((a, b) =>
-                        (load[a.name] ?? 0) - (load[b.name] ?? 0)
-                      )[0]
-
-                      if (!next[chosen.name]) next[chosen.name] = {}
-                      if (!next[chosen.name][sec.name]) next[chosen.name][sec.name] = {}
-                      next[chosen.name][sec.name][s.name] =
-                        (next[chosen.name][sec.name][s.name] ?? 0) + target
-                      load[chosen.name] = (load[chosen.name] ?? 0) + target
-                    })
-                  })
-                  Object.keys(next).forEach(k => { if (!Object.keys(next[k]).length) delete next[k] })
-                  store.setTeacherAllocations?.(next)
-                }} label="AI allocate all" />
+                <AISuggestButton onClick={() => handleAITeacherAllocate()} label="AI allocate all" />
+                <button
+                  onClick={handleSyncFromResources}
+                  title="Re-derive period slots from subject configs, then assign teachers from subject mappings — overwrites current allocations"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '4px 11px', borderRadius: 6, border: '1px solid #BBF7D0',
+                    background: '#F0FDF4', color: '#15803D', fontSize: 11, fontWeight: 700,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  <Sparkles size={10} /> Sync from Resources
+                </button>
                 <button
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
