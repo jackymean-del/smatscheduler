@@ -128,6 +128,15 @@ export function StepAllocation() {
     })
 
     // Resource-level: subjects with no teacher assigned in period-allocated cells
+    //
+    // A teacher is considered "assigned" for a (section, subject) pair when
+    // EITHER of these is true — checking both avoids false positives where the
+    // user has designated a teacher in Resources but hasn't yet run AI allocate:
+    //
+    //   Signal A — teacherAllocations has an explicit period number > 0
+    //              (set via Teacher Allocation tab or AI allocate)
+    //   Signal B — a teacher's subjectMappings in Resources lists this section
+    //              for this subject (designation without period count yet)
     const missingBySubject: Record<string, string[]> = {}
     ;(sections as Section[]).forEach(sec => {
       ;(subjects as Subject[]).forEach(s => {
@@ -135,10 +144,16 @@ export function StepAllocation() {
         if (!raw) return
         const p = parseAllocation(raw)
         if (!p.valid || p.weeklyTotal <= 0) return
+
         const hasTeacher = (staff as Staff[]).some(t => {
-          const assigned = (teacherAllocations as any)?.[t.name]?.[sec.name]?.[s.name]
-          return typeof assigned === 'number' && assigned > 0
+          // Signal A: explicit period allocation
+          const allocated = (teacherAllocations as any)?.[t.name]?.[sec.name]?.[s.name]
+          if (typeof allocated === 'number' && allocated > 0) return true
+          // Signal B: teacher is designated via subjectMappings in Resources
+          const maps: Array<{ subject: string; classes: string[] }> = (t as any).subjectMappings ?? []
+          return maps.some((m: any) => m.subject === s.name && (m.classes ?? []).includes(sec.name))
         })
+
         if (!hasTeacher) {
           if (!missingBySubject[s.name]) missingBySubject[s.name] = []
           missingBySubject[s.name].push(sec.name)
