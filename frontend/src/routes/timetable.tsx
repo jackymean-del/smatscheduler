@@ -44,18 +44,24 @@ function getSectionClassKey(sectionName: string): string {
 }
 
 /**
- * Compute per-teaching-period start/end times for a specific section,
+ * Compute per-period start/end times for a specific section,
  * accounting for its class-wise break offsets.
+ *
+ * Covers BOTH teaching periods AND class-specific break periods so callers
+ * can use sectionTimes.get(p.id) for any period type.
  *
  * Algorithm for teaching period pN (1-based):
  *   start = schoolStart + assembly(15 min) + sum(classBrks where afterPeriod < N) + (N-1)*periodDur
+ *
+ * Algorithm for a break with afterPeriod = k:
+ *   start = schoolStart + assembly + sum(breaks where afterPeriod < k) + k*periodDur
  *
  * Returns null when no class-wise breaks are configured (caller falls back
  * to the unified periodTimes map).
  */
 function calcSectionTimes(
   sectionName: string,
-  classwiseBreaks: Array<{classes: string[]; afterPeriod: number; duration: number}> | undefined,
+  classwiseBreaks: Array<{id: string; classes: string[]; afterPeriod: number; duration: number}> | undefined,
   config: any,
   classPeriods: Period[],
 ): Map<string,{start:string;end:string}> | null {
@@ -81,6 +87,8 @@ function calcSectionTimes(
   }
 
   const map = new Map<string,{start:string;end:string}>()
+
+  // Teaching periods
   classPeriods.forEach((p, idx) => {
     const N = idx + 1
     const precedingMins = sectionBreaks
@@ -89,7 +97,61 @@ function calcSectionTimes(
     const s = startMins + assembly + precedingMins + (N - 1) * periodDur
     map.set(p.id, { start: fmt(s), end: fmt(s + periodDur) })
   })
+
+  // Break periods (keyed by brk.id so buildClassPeriods can find them)
+  sectionBreaks.forEach(brk => {
+    const k = brk.afterPeriod
+    const precedingMins = sectionBreaks
+      .filter(b => b.afterPeriod < k)
+      .reduce((s, b) => s + b.duration, 0)
+    const brkStart = startMins + assembly + precedingMins + k * periodDur
+    map.set(brk.id, { start: fmt(brkStart), end: fmt(brkStart + brk.duration) })
+  })
+
   return map
+}
+
+/**
+ * Build a class-specific period list for display — teaching periods
+ * interleaved with only the breaks that apply to this section.
+ * When no class-wise breaks are configured, returns the unified periods array.
+ */
+function buildClassPeriods(
+  sectionName: string,
+  allPeriods: Period[],
+  classwiseBreaks: Array<{id: string; name: string; type: string; classes: string[]; afterPeriod: number; duration: number}> | undefined,
+): Period[] {
+  if (!classwiseBreaks?.length) return allPeriods
+
+  const classKey = getSectionClassKey(sectionName)
+  const sectionBreaks = classwiseBreaks.filter(b =>
+    b.classes.length === 0 || b.classes.includes(classKey)
+  )
+  if (!sectionBreaks.length) return allPeriods
+
+  const mkBreak = (b: typeof sectionBreaks[0]): Period => ({
+    id: b.id, name: b.name, duration: b.duration,
+    type: (b.type === 'lunch' ? 'lunch' : 'break') as Period['type'],
+    shiftable: false,
+  })
+
+  const classPeriods = allPeriods.filter(p => p.type === 'class')
+  const fixedStarts  = allPeriods.filter(p => p.type === 'fixed-start')
+  const fixedEnds    = allPeriods.filter(p => p.type === 'fixed-end')
+
+  const result: Period[] = [...fixedStarts]
+
+  // Breaks before period 1 (afterPeriod === 0)
+  sectionBreaks.filter(b => b.afterPeriod === 0).forEach(b => result.push(mkBreak(b)))
+
+  classPeriods.forEach((p, idx) => {
+    result.push(p)
+    const pNum = idx + 1
+    sectionBreaks.filter(b => b.afterPeriod === pNum).forEach(b => result.push(mkBreak(b)))
+  })
+
+  result.push(...fixedEnds)
+  return result
 }
 
 // ── Period header ──────────────────────────────────────────
@@ -98,7 +160,7 @@ function PeriodCol({ p, times, onShiftLeft, onShiftRight }: { p:Period; times?:{
   const bg = p.type==="fixed-start"?"#dbeafe":p.type==="lunch"?"#fef3c7":p.type==="break"?"#fef9c3":p.type==="fixed-end"?"#EDE9FF":"#F8F7FF"
   const color = p.type==="fixed-start"?"#1e40af":p.type==="lunch"?"#92400e":p.type==="break"?"#854d0e":p.type==="fixed-end"?"#065f46":"#4B5275"
   return (
-    <th style={{ background:bg, color, fontSize:10, fontWeight:700, padding:"6px 4px", border:"1px solid #E8E4FF", textAlign:"center", minWidth:isBreak?64:80, whiteSpace:"nowrap", position:"relative" as const }}>
+    <th style={{ background:bg, color, fontSize:10, fontWeight:700, padding:"6px 4px", border:"1px solid #E8E4FF", textAlign:"center", minWidth:80, whiteSpace:"nowrap", position:"relative" as const }}>
       <div>{p.name}</div>
       {times && <><div style={{ fontSize:8, fontWeight:600, opacity:0.9 }}>{times.start}</div><div style={{ fontSize:8, fontWeight:400, opacity:0.6 }}>→ {times.end}</div></>}
       {onShiftLeft && !isBreak && (
@@ -310,16 +372,18 @@ export function TimetablePage() {
     const ctName = resolveTeacher(section?.classTeacher ?? "")
     const usedDays = config.workDays.filter(d => sd[d])
     // Use class-wise timing when configured, fall back to unified periodTimes
-    const sectionTimes = calcSectionTimes(sn, (config as any).classwiseBreaks, config, classPeriods) ?? periodTimes
+    const cwBreaks = (config as any).classwiseBreaks as Parameters<typeof buildClassPeriods>[2]
+    const sectionPeriods = buildClassPeriods(sn, periods, cwBreaks)
+    const sectionTimes   = calcSectionTimes(sn, cwBreaks, config, classPeriods) ?? periodTimes
     return (
       <div>
         <SectionHeader name={sn} classTeacher={ctName} meta={`${config.workDays.length} days/week · ${classPeriods.length} periods/day`} />
         <div style={{ overflowX:"auto" }}>
-          <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+          <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%", tableLayout:"fixed" as const }}>
             <thead><tr>
-              <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {periods.map((p, pi) => (
-                <PeriodCol key={p.id} p={p} times={sectionTimes.get(p.id)}
+              <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", width:70, minWidth:60, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
+              {sectionPeriods.map((p, pi) => (
+                <PeriodCol key={p.id} p={p} times={sectionTimes.get(p.id) ?? periodTimes.get(p.id)}
                   onShiftLeft={() => handleShift(pi, -1)} onShiftRight={() => handleShift(pi, 1)} />
               ))}
             </tr></thead>
@@ -327,7 +391,7 @@ export function TimetablePage() {
               {usedDays.map((day, di) => (
                 <tr key={day} style={{ background: di%2===0?"#fff":"#FAFAFE" }}>
                   <td style={{ padding:"6px 12px", fontWeight:700, fontSize:11, color:"#1e293b", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>{DAY_SHORT[day]??day.slice(0,3)}</td>
-                  {periods.map(p => {
+                  {sectionPeriods.map(p => {
                     if (p.type !== "class") return <BreakCell key={p.id} p={p} />
                     const cell = sd[day]?.[p.id]
                     const isSub = !!substitutions[`${sn}|${day}|${p.id}`]
@@ -366,8 +430,9 @@ export function TimetablePage() {
     const section = sections.find(s => s.name === sn)
     const ctName = resolveTeacher(section?.classTeacher ?? "")
     const usedDays = config.workDays.filter(d => sd[d])
-    // Use class-wise timing when configured, fall back to unified periodTimes
-    const sectionTimes = calcSectionTimes(sn, (config as any).classwiseBreaks, config, classPeriods) ?? periodTimes
+    const cwBreaksT = (config as any).classwiseBreaks as Parameters<typeof buildClassPeriods>[2]
+    const sectionPeriodsT = buildClassPeriods(sn, periods, cwBreaksT)
+    const sectionTimesT   = calcSectionTimes(sn, cwBreaksT, config, classPeriods) ?? periodTimes
     return (
       <div>
         <SectionHeader name={sn} classTeacher={ctName} meta="Transposed view" />
@@ -380,9 +445,9 @@ export function TimetablePage() {
               ))}
             </tr></thead>
             <tbody>
-              {periods.map((p, pi) => {
+              {sectionPeriodsT.map((p, pi) => {
                 const isBreak = p.type !== "class"
-                const times = sectionTimes.get(p.id)
+                const times = sectionTimesT.get(p.id) ?? periodTimes.get(p.id)
                 return (
                   <tr key={p.id} style={{ background: isBreak?"#fffbeb":pi%2===0?"#fff":"#FAFAFE" }}>
                     <td style={{ padding:"6px 10px", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>

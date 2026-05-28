@@ -1514,9 +1514,33 @@ export function StepBell() {
       // Persist class-wise break config so the timetable display shows correct per-class times
       classwiseBreaks: cwRows.length > 0 ? cwRows : undefined,
     } as any)
-    setBreaks(displayRows.filter(r => r.type !== 'teaching').map(r => ({
-      id: r.id, name: r.name, duration: r.duration, type: r.type as any, shiftable: r.type === 'short-break',
-    })))
+    // When class-wise breaks are configured, store CANONICAL breaks (one per afterPeriod
+    // position) so that buildPeriodSequenceFromCw can later reconstruct the correct period
+    // layout.  Storing the raw merged displayRows would produce duplicate Lunch Break
+    // entries in store.breaks which causes wrong column counts in the timetable.
+    if (cwRows.length > 0) {
+      const byPos = new Map<number, CwBreakRow>()
+      for (const row of cwRows) {
+        const ex = byPos.get(row.afterPeriod)
+        if (!ex) { byPos.set(row.afterPeriod, row); continue }
+        // prefer lunch over short-break; then longer duration
+        if (row.type === 'lunch' && ex.type !== 'lunch') { byPos.set(row.afterPeriod, row); continue }
+        if (row.duration > ex.duration && row.type === ex.type) byPos.set(row.afterPeriod, row)
+      }
+      const canonical: Array<{ id: string; name: string; duration: number; type: any; shiftable: boolean }> = [
+        { id: 'assembly', name: 'Assembly', duration: 15, type: 'fixed-start', shiftable: false },
+      ]
+      byPos.forEach(row => canonical.push({
+        id: row.id, name: row.name, duration: row.duration,
+        type: row.type === 'lunch' ? 'lunch' : 'break',
+        shiftable: row.type === 'short-break',
+      }))
+      setBreaks(canonical as any)
+    } else {
+      setBreaks(displayRows.filter(r => r.type !== 'teaching').map(r => ({
+        id: r.id, name: r.name, duration: r.duration, type: r.type as any, shiftable: r.type === 'short-break',
+      })))
+    }
     setStep(2)
   }
 

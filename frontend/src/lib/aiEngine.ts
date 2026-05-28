@@ -32,6 +32,60 @@ export function buildPeriodSequence(breaks: Period[], periodsPerDay: number): Pe
   return result
 }
 
+// ─── Build Period Sequence from Class-wise Breaks ─────────
+/**
+ * Correctly builds a unified period sequence when class-wise break config is
+ * available.  Unlike `buildPeriodSequence` (which distributes periods evenly),
+ * this function places every break at its EXACT `afterPeriod` position.
+ *
+ * canonical selection (one break per afterPeriod):
+ *   • prefer type === 'lunch' over 'short-break'
+ *   • then prefer the longest duration
+ *
+ * @param cwBrks   class-wise break rows from WizardConfig.classwiseBreaks
+ * @param periodsPerDay  total teaching periods per day
+ * @param periodDuration  duration of each teaching period in minutes (default 40)
+ * @param fixedStartBreaks  fixed-start periods to prepend (e.g. Assembly)
+ */
+export function buildPeriodSequenceFromCw(
+  cwBrks: Array<{ id: string; name: string; type: string; afterPeriod: number; duration: number }>,
+  periodsPerDay: number,
+  periodDuration = 40,
+  fixedStartBreaks: Period[] = [],
+): Period[] {
+  const result: Period[] = [...fixedStartBreaks]
+
+  // Canonical: one break per afterPeriod — prefer lunch then longest
+  const byPos = new Map<number, typeof cwBrks[0]>()
+  for (const brk of cwBrks) {
+    const ex = byPos.get(brk.afterPeriod)
+    if (!ex) { byPos.set(brk.afterPeriod, brk); continue }
+    if (brk.type === 'lunch' && ex.type !== 'lunch') { byPos.set(brk.afterPeriod, brk); continue }
+    if (brk.duration > ex.duration && brk.type === ex.type) byPos.set(brk.afterPeriod, brk)
+  }
+
+  const mkBreak = (brk: typeof cwBrks[0]): Period => ({
+    id: brk.id,
+    name: brk.name,
+    duration: brk.duration,
+    type: (brk.type === 'lunch' ? 'lunch' : 'break') as Period['type'],
+    shiftable: false,
+  })
+
+  // Break before period 1 (afterPeriod === 0)
+  const pre = byPos.get(0)
+  if (pre) result.push(mkBreak(pre))
+
+  // Teaching periods, each followed by any break at that position
+  for (let n = 1; n <= periodsPerDay; n++) {
+    result.push({ id: `p${n}`, name: `Period ${n}`, duration: periodDuration, type: 'class', shiftable: true })
+    const post = byPos.get(n)
+    if (post) result.push(mkBreak(post))
+  }
+
+  return result
+}
+
 // ─── Check Teacher Busy ───────────────────────────────────
 function isTeacherBusy(
   teacherName: string, day: string, periodId: string,

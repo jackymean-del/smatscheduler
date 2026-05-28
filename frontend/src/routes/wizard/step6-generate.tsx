@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useTimetableStore } from "@/store/timetableStore"
 import { useTerminology } from "@/hooks/useTerminology"
-import { buildPeriodSequence } from "@/lib/aiEngine"
+import { buildPeriodSequence, buildPeriodSequenceFromCw } from "@/lib/aiEngine"
 import { solveTimetable, generateSuggestions, durationToWeeklyPeriods } from "@/lib/schedulingEngine"
 import { ReviewDashboard } from "@/components/master/ReviewDashboard"
 import { getCountry } from "@/lib/orgData"
@@ -157,7 +157,16 @@ export function Step6Generate() {
 
     try {
       const workDays = config.workDays?.length ? config.workDays : ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY']
-      const periods  = buildPeriodSequence(breaks, config.periodsPerDay ?? 8)
+
+      // Build period sequence:
+      //   • If class-wise breaks are configured use buildPeriodSequenceFromCw which
+      //     places each break at its EXACT afterPeriod position (correct distribution).
+      //   • Otherwise fall back to the legacy even-distribution builder.
+      const classwiseBreaks = (config as any).classwiseBreaks as Array<{id:string;name:string;type:string;afterPeriod:number;duration:number}> | undefined
+      const fixedStarts = breaks.filter((b: any) => b.type === 'fixed-start') as Period[]
+      const periods = classwiseBreaks?.length
+        ? buildPeriodSequenceFromCw(classwiseBreaks, config.periodsPerDay ?? 8, config.defaultSessionDuration ?? 40, fixedStarts)
+        : buildPeriodSequence(breaks, config.periodsPerDay ?? 8)
 
       const resolvedSubjects = store.schedulingMode === 'duration-based'
         ? subjects.map(sub => {
