@@ -58,7 +58,7 @@ const BEHAVIOR_META: Record<GroupingBehavior, {
   SAME_GRADE_ONLY:      { label: 'Same grade only', short: 'Same grade',    bg: '#EFF6FF', fg: '#1D4ED8', border: '#DBEAFE', desc: 'One group per grade. All streams within the same grade are merged (e.g. XI-Sci + XI-Com + XI-Arts → one XI group).' },
   SAME_STREAM_ONLY:     { label: 'Same stream only',short: 'Same stream',   bg: '#FFF7ED', fg: '#C2410C', border: '#FED7AA', desc: 'One group per stream across all grades. XI-Arts + XII-Arts form one group; XI-Sci + XII-Sci another. Useful for stream-specific electives.' },
   CROSS_GRADE_ALLOWED:  { label: 'Cross grade',     short: 'Cross grade',   bg: '#EDE9FF', fg: '#7C3AED', border: '#C4B5FD', desc: 'All grades merged into one group regardless of grade or stream. Best for whole-school electives like Music or Dance.' },
-  CROSS_STREAM_ALLOWED: { label: 'Cross stream',    short: 'Cross stream',  bg: '#FCE7F3', fg: '#9D174D', border: '#FBCFE8', desc: 'One group per grade but streams within that grade are kept separate (e.g. XI-Arts alone, XI-Sci alone). Opposite of "Same grade".' },
+  CROSS_STREAM_ALLOWED: { label: 'Any stream',      short: 'Any stream',    bg: '#FCE7F3', fg: '#9D174D', border: '#FBCFE8', desc: 'No stream restriction — students from any stream can be grouped together. Pair with Same grade to get one group per grade with all streams merged.' },
   FLEXIBLE_GROUPING:    { label: 'Flexible (AI)',   short: 'Flexible',      bg: '#DCFCE7', fg: '#15803D', border: '#BBF7D0', desc: 'AI starts with the strictest rule (same grade + same stream) and progressively relaxes — merging streams, then grades — until every group reaches the minimum size threshold.' },
 }
 const BEHAVIORS: GroupingBehavior[] = [
@@ -70,33 +70,60 @@ function groupColor(i: number) { return GROUP_COLORS[i % GROUP_COLORS.length] }
 
 // ── multi-select grouping helpers ─────────────────────────────────────────────
 
-/** Normalise stored rule → array (handles both legacy string and new array). */
+const GRADE_OPTS:  GroupingBehavior[] = ['SAME_GRADE_ONLY',  'CROSS_GRADE_ALLOWED']
+const STREAM_OPTS: GroupingBehavior[] = ['SAME_STREAM_ONLY', 'CROSS_STREAM_ALLOWED']
+
+/**
+ * Normalise stored rule → a sanitized array that always has EXACTLY one
+ * selection from the grade pair AND one from the stream pair (or a single
+ * exclusive behavior).  This fixes stale persisted data that may have had
+ * contradictory values (e.g. both SAME_STREAM + CROSS_STREAM from before the
+ * mutual-exclusivity fix).
+ *
+ * Grade pair:  SAME_GRADE_ONLY  ↔  CROSS_GRADE_ALLOWED   (default: same grade)
+ * Stream pair: SAME_STREAM_ONLY ↔  CROSS_STREAM_ALLOWED  (default: cross stream = any stream)
+ */
 function getBehaviors(rule: any): GroupingBehavior[] {
-  if (!rule) return ['SAME_GRADE_ONLY']
-  if (Array.isArray(rule)) return (rule as GroupingBehavior[]).length ? rule as GroupingBehavior[] : ['SAME_GRADE_ONLY']
-  return [rule as GroupingBehavior]
+  const raw: GroupingBehavior[] = !rule ? []
+    : Array.isArray(rule) ? (rule as GroupingBehavior[])
+    : [rule as GroupingBehavior]
+
+  // Exclusive overrides take the whole slot
+  if (raw.includes('NO_GROUPING'))    return ['NO_GROUPING']
+  if (raw.includes('FLEXIBLE_GROUPING')) return ['FLEXIBLE_GROUPING']
+
+  // Keep only the LAST selection from each pair (last = most recently added)
+  const gradeChoices  = raw.filter(b => GRADE_OPTS.includes(b))
+  const streamChoices = raw.filter(b => STREAM_OPTS.includes(b))
+  const gradeChoice  = gradeChoices.length  > 0 ? gradeChoices[gradeChoices.length - 1]   : 'SAME_GRADE_ONLY'
+  const streamChoice = streamChoices.length > 0 ? streamChoices[streamChoices.length - 1] : 'CROSS_STREAM_ALLOWED'
+  return [gradeChoice, streamChoice]
 }
 
 type GroupingMode = 'none' | 'grade' | 'stream' | 'grade_stream' | 'all' | 'flexible'
 
 /**
- * Collapse a set of selected behaviors into one canonical mode used for
- * group generation.  Multiple selections combine their constraints:
- *   SAME_GRADE_ONLY + SAME_STREAM_ONLY  →  grade_stream
- *   CROSS_STREAM_ALLOWED                →  grade_stream  (shorthand)
- *   CROSS_GRADE_ALLOWED alone           →  all (one big group)
- *   NO_GROUPING                         →  none  (overrides all)
- *   FLEXIBLE_GROUPING                   →  flexible (overrides non-exclusive)
+ * Map a sanitized behaviors array to the canonical generation mode.
+ *
+ * Grade axis:   SAME_GRADE_ONLY → restrict to same grade
+ *               CROSS_GRADE_ALLOWED → no grade restriction
+ * Stream axis:  SAME_STREAM_ONLY → restrict to same stream
+ *               CROSS_STREAM_ALLOWED → no stream restriction (streams can mix)
+ *
+ * Combinations:
+ *   Same grade  + Any stream  → grade  (one group per grade, streams merged)
+ *   Same grade  + Same stream → grade_stream (one group per grade+stream)
+ *   Any grade   + Same stream → stream (one group per stream across grades)
+ *   Any grade   + Any stream  → all   (one big group)
  */
 function computeGroupingMode(behaviors: GroupingBehavior[]): GroupingMode {
-  if (!behaviors.length) return 'grade'
-  if (behaviors.includes('NO_GROUPING')) return 'none'
+  if (behaviors.includes('NO_GROUPING'))    return 'none'
   if (behaviors.includes('FLEXIBLE_GROUPING')) return 'flexible'
-  const wantsGrade  = behaviors.some(b => b === 'SAME_GRADE_ONLY'  || b === 'CROSS_STREAM_ALLOWED')
-  const wantsStream = behaviors.some(b => b === 'SAME_STREAM_ONLY' || b === 'CROSS_STREAM_ALLOWED')
-  if (wantsGrade && wantsStream) return 'grade_stream'
-  if (wantsGrade)  return 'grade'
-  if (wantsStream) return 'stream'
+  const partitionByGrade  = behaviors.includes('SAME_GRADE_ONLY')
+  const partitionByStream = behaviors.includes('SAME_STREAM_ONLY')
+  if (partitionByGrade && partitionByStream) return 'grade_stream'
+  if (partitionByGrade)  return 'grade'
+  if (partitionByStream) return 'stream'
   return 'all'
 }
 
@@ -1001,24 +1028,22 @@ export function StepStudentGroups() {
               const mode      = computeGroupingMode(behaviors)
               const modeMeta  = MODE_META[mode]
 
-              /** Toggle one behavior in/out of the multi-select. */
+              /** Radio-style select within each pair. Clicking the active button is a no-op. */
               const toggleBeh = (beh: GroupingBehavior) => {
-                const curr = getBehaviors(subjectGroupingRules[col.key])
+                const curr = getBehaviors(subjectGroupingRules[col.key]) // always sanitized
+                if (curr.includes(beh)) return // already active — no-op (radio behavior)
+
                 let next: GroupingBehavior[]
                 if (beh === 'NO_GROUPING' || beh === 'FLEXIBLE_GROUPING') {
-                  // Exclusive: clicking replaces everything; second click deselects back to default
-                  next = curr.includes(beh) ? ['SAME_GRADE_ONLY'] : [beh]
+                  next = [beh]
                 } else {
-                  // Normal toggle — strip exclusive behaviors, then enforce mutual exclusivity
-                  const base = curr.filter(b => b !== 'NO_GROUPING' && b !== 'FLEXIBLE_GROUPING')
-                  if (base.includes(beh)) {
-                    next = base.filter(b => b !== beh)
-                  } else {
-                    // Remove the contradictory opposite before adding
-                    const opp = BEHAVIOR_OPPOSITE[beh]
-                    next = [...base.filter(b => b !== opp), beh]
-                  }
-                  if (!next.length) next = ['SAME_GRADE_ONLY'] // never leave empty
+                  const opp = BEHAVIOR_OPPOSITE[beh]
+                  // Replace the opposite on this axis; keep the other axis untouched
+                  const base = curr.filter(b => b !== opp && b !== 'NO_GROUPING' && b !== 'FLEXIBLE_GROUPING')
+                  next = [...base, beh]
+                  // Guarantee both pairs are always covered
+                  if (!next.some(b => GRADE_OPTS.includes(b)))  next.push('SAME_GRADE_ONLY')
+                  if (!next.some(b => STREAM_OPTS.includes(b))) next.push('CROSS_STREAM_ALLOWED')
                 }
                 setSubjectGroupingRule(col.key, next)
               }
@@ -1026,16 +1051,46 @@ export function StepStudentGroups() {
               return (
                 <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: '#fff', border: '1px solid #E8E4FF', flexWrap: 'wrap' }}>
                   <div style={{ minWidth: 140, fontSize: 13, fontWeight: 600, color: '#13111E' }}>{col.label}</div>
-                  <div style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {BEHAVIORS.map(beh => {
-                      const bm = BEHAVIOR_META[beh]
-                      const active = behaviors.includes(beh)
-                      return (
-                        <button key={beh} onClick={() => toggleBeh(beh)} title={bm.desc}
-                          style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active ? bm.border : '#E8E4FF'}`, background: active ? bm.bg : '#F8F7FF', color: active ? bm.fg : '#8B87AD', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.1s' }}>
-                          {active && <span style={{ marginRight: 3, fontSize: 9 }}>✓</span>}{bm.short}
-                        </button>
-                      )
+                  <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* No group */}
+                    {(['NO_GROUPING'] as GroupingBehavior[]).map(beh => {
+                      const bm = BEHAVIOR_META[beh]; const active = behaviors.includes(beh)
+                      return <button key={beh} onClick={() => toggleBeh(beh)} title={bm.desc}
+                        style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active ? bm.border : '#E8E4FF'}`, background: active ? bm.bg : '#F8F7FF', color: active ? bm.fg : '#8B87AD', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.1s' }}>
+                        {active && <span style={{ marginRight: 3, fontSize: 9 }}>●</span>}{bm.short}
+                      </button>
+                    })}
+
+                    {/* Grade pair separator */}
+                    <span style={{ fontSize: 9, color: '#C4C0DC', fontWeight: 700, margin: '0 2px', userSelect: 'none' }}>│</span>
+                    <span style={{ fontSize: 9, color: '#8B87AD', fontWeight: 600, marginRight: 2 }}>Grade:</span>
+                    {GRADE_OPTS.map(beh => {
+                      const bm = BEHAVIOR_META[beh]; const active = behaviors.includes(beh)
+                      return <button key={beh} onClick={() => toggleBeh(beh)} title={bm.desc}
+                        style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active ? bm.border : '#E8E4FF'}`, background: active ? bm.bg : '#F8F7FF', color: active ? bm.fg : '#8B87AD', fontSize: 10, fontWeight: 700, cursor: active ? 'default' : 'pointer', fontFamily: 'inherit', transition: 'all 0.1s' }}>
+                        {active && <span style={{ marginRight: 3, fontSize: 9 }}>●</span>}{bm.short}
+                      </button>
+                    })}
+
+                    {/* Stream pair separator */}
+                    <span style={{ fontSize: 9, color: '#C4C0DC', fontWeight: 700, margin: '0 2px', userSelect: 'none' }}>│</span>
+                    <span style={{ fontSize: 9, color: '#8B87AD', fontWeight: 600, marginRight: 2 }}>Stream:</span>
+                    {STREAM_OPTS.map(beh => {
+                      const bm = BEHAVIOR_META[beh]; const active = behaviors.includes(beh)
+                      return <button key={beh} onClick={() => toggleBeh(beh)} title={bm.desc}
+                        style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active ? bm.border : '#E8E4FF'}`, background: active ? bm.bg : '#F8F7FF', color: active ? bm.fg : '#8B87AD', fontSize: 10, fontWeight: 700, cursor: active ? 'default' : 'pointer', fontFamily: 'inherit', transition: 'all 0.1s' }}>
+                        {active && <span style={{ marginRight: 3, fontSize: 9 }}>●</span>}{bm.short}
+                      </button>
+                    })}
+
+                    {/* Flexible */}
+                    <span style={{ fontSize: 9, color: '#C4C0DC', fontWeight: 700, margin: '0 2px', userSelect: 'none' }}>│</span>
+                    {(['FLEXIBLE_GROUPING'] as GroupingBehavior[]).map(beh => {
+                      const bm = BEHAVIOR_META[beh]; const active = behaviors.includes(beh)
+                      return <button key={beh} onClick={() => toggleBeh(beh)} title={bm.desc}
+                        style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active ? bm.border : '#E8E4FF'}`, background: active ? bm.bg : '#F8F7FF', color: active ? bm.fg : '#8B87AD', fontSize: 10, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.1s' }}>
+                        {active && <span style={{ marginRight: 3, fontSize: 9 }}>●</span>}{bm.short}
+                      </button>
                     })}
                   </div>
                   <span style={{ fontSize: 10, color: modeMeta.fg, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: modeMeta.bg, border: `1px solid ${modeMeta.border}`, whiteSpace: 'nowrap' }}>{modeMeta.label}</span>
