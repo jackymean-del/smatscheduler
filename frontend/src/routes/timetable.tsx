@@ -730,8 +730,8 @@ export function TimetablePage() {
                       <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
                         <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:44, border:cell.conflict?"2px solid #fca5a5":"none", position:"relative" as const }}>
                           {cell.conflict && <span style={{ position:"absolute" as const, top:2, right:3, fontSize:8, color:"#dc2626" }}>⚠</span>}
-                          <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
-                          <div style={{ fontSize:9, color:"#475569", marginTop:2, fontWeight:600 }}>{cell.sectionName}</div>
+                          <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{cell.sectionName}</div>
+                          <div style={{ fontSize:9, color:"#475569", marginTop:2 }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
                           {cell.isClassTeacher && <div style={{ fontSize:8, color:"#7C6FE0" }}>★ Class Teacher</div>}
                           {showRoom && cell.room && <div style={{ fontSize:8, opacity:0.55 }}>{cell.room}</div>}
                         </div>
@@ -852,8 +852,9 @@ export function TimetablePage() {
                       return (
                         <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
                           <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:42 }}>
-                            <div style={{ fontSize:10, fontWeight:700 }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
-                            <div style={{ fontSize:9, color:"#475569", fontWeight:600 }}>{cell.sectionName}</div>
+                            <div style={{ fontSize:10, fontWeight:700 }}>{cell.sectionName}</div>
+                            <div style={{ fontSize:9, color:"#475569" }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
+                            {(cell as any).room && <div style={{ fontSize:8, opacity:0.55 }}>{(cell as any).room}</div>}
                           </div>
                         </td>
                       )
