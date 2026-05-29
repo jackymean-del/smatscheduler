@@ -258,21 +258,37 @@ function isFullLunchColumn(
   })
 }
 
-// ── Period header ──────────────────────────────────────────
-function PeriodCol({ p, times, onShiftLeft, onShiftRight }: { p:Period; times?:{start:string;end:string}; onShiftLeft?:()=>void; onShiftRight?:()=>void }) {
+// ── Period header — draggable column header in edit mode ──────
+function PeriodCol({ p, times, editMode, isDragSrc, isDragOver, onDragStart, onDragEnd, onDragOver, onDrop }: {
+  p: Period; times?: {start:string;end:string};
+  editMode?: boolean; isDragSrc?: boolean; isDragOver?: boolean;
+  onDragStart?: () => void; onDragEnd?: () => void;
+  onDragOver?: (e: React.DragEvent) => void; onDrop?: () => void;
+}) {
   const isBreak = p.type !== "class"
-  const bg = p.type==="fixed-start"?"#dbeafe":p.type==="lunch"?"#fef3c7":p.type==="break"?"#fef9c3":p.type==="fixed-end"?"#EDE9FF":"#F8F7FF"
-  const color = p.type==="fixed-start"?"#1e40af":p.type==="lunch"?"#92400e":p.type==="break"?"#854d0e":p.type==="fixed-end"?"#065f46":"#4B5275"
+  const canDrag = !!(editMode && !isBreak)
+  const bg = isDragOver ? "#7C6FE0"
+    : isDragSrc ? "#d6d3f5"
+    : p.type==="fixed-start"?"#dbeafe":p.type==="lunch"?"#fef3c7":p.type==="break"?"#fef9c3":p.type==="fixed-end"?"#EDE9FF":"#F8F7FF"
+  const color = isDragOver ? "#fff"
+    : isDragSrc ? "#4338ca"
+    : p.type==="fixed-start"?"#1e40af":p.type==="lunch"?"#92400e":p.type==="break"?"#854d0e":p.type==="fixed-end"?"#065f46":"#4B5275"
   return (
-    <th style={{ background:bg, color, fontSize:10, fontWeight:700, padding:"6px 4px", border:"1px solid #E8E4FF", textAlign:"center", minWidth:80, whiteSpace:"nowrap", position:"relative" as const }}>
+    <th
+      draggable={canDrag}
+      onDragStart={canDrag ? e => { e.dataTransfer.effectAllowed = "move"; onDragStart?.() } : undefined}
+      onDragEnd={canDrag ? onDragEnd : undefined}
+      onDragOver={canDrag ? onDragOver : undefined}
+      onDrop={canDrag ? e => { e.preventDefault(); onDrop?.() } : undefined}
+      style={{ background:bg, color, fontSize:10, fontWeight:700, padding:"6px 4px",
+        border: isDragOver ? "2px dashed #fff" : isDragSrc ? "2px dashed #7C6FE0" : "1px solid #E8E4FF",
+        textAlign:"center", minWidth:80, whiteSpace:"nowrap", position:"relative" as const,
+        cursor: canDrag ? "grab" : "default", opacity: isDragSrc ? 0.6 : 1,
+        userSelect:"none" as const, transition:"background 0.12s, opacity 0.12s",
+      }}>
       <div>{p.name}</div>
       {times && <><div style={{ fontSize:8, fontWeight:600, opacity:0.9 }}>{times.start}</div><div style={{ fontSize:8, fontWeight:400, opacity:0.6 }}>→ {times.end}</div></>}
-      {onShiftLeft && !isBreak && (
-        <div style={{ display:"flex", justifyContent:"center", gap:2, marginTop:3 }}>
-          <button onClick={onShiftLeft} title="Shift left" style={{ fontSize:8, border:"1px solid #E8E4FF", borderRadius:2, background:"#fff", cursor:"pointer", color:"#8B87AD", padding:"0 4px", lineHeight:"14px" }}>◀</button>
-          <button onClick={onShiftRight} title="Shift right" style={{ fontSize:8, border:"1px solid #E8E4FF", borderRadius:2, background:"#fff", cursor:"pointer", color:"#8B87AD", padding:"0 4px", lineHeight:"14px" }}>▶</button>
-        </div>
-      )}
+      {canDrag && <div style={{ fontSize:8, color: isDragOver?"rgba(255,255,255,0.75)":isDragSrc?"#7C6FE0":"#C4BFEA", marginTop:2 }} title="Drag to swap column">⠿</div>}
     </th>
   )
 }
@@ -445,6 +461,10 @@ export function TimetablePage() {
   const [dragOverCell, setDragOverCell] = useState<string|null>(null) // key = "sec|day|pid"
   const [publishConfirm, setPublishConfirm] = useState(false)
 
+  // ── Column drag-and-drop state (period column / row swap) ──
+  const [colDragIdx,     setColDragIdx]     = useState<number | null>(null)
+  const [colDragOverIdx, setColDragOverIdx] = useState<number | null>(null)
+
   // ── Undo / redo history ──────────────────────────────────
   const [classTTHistory, setClassTTHistory] = useState<typeof classTT[]>([])
   const [classTTFuture,  setClassTTFuture]  = useState<typeof classTT[]>([])
@@ -584,13 +604,12 @@ export function TimetablePage() {
   }
 
   // ── Show swap preview modal; actual apply happens via applyShift ──
-  const handleShift = (idx: number, dir: -1|1) => {
-    const idxB = idx + dir
-    if (idxB < 0 || idxB >= periods.length) return
-    const pA = periods[idx], pB = periods[idxB]
+  const handleShift = (idxA: number, idxB: number) => {
+    if (idxA === idxB || idxA < 0 || idxB < 0 || idxA >= periods.length || idxB >= periods.length) return
+    const pA = periods[idxA], pB = periods[idxB]
     const bothClass = pA.type === 'class' && pB.type === 'class'
-    const { safe, conflicted, conflictingSections } = simulateSwapConflicts(idx, idxB)
-    setSwapPreview({ idxA: idx, idxB, pA, pB, bothClass, safe, conflicted, conflictingSections })
+    const { safe, conflicted, conflictingSections } = simulateSwapConflicts(idxA, idxB)
+    setSwapPreview({ idxA, idxB, pA, pB, bothClass, safe, conflicted, conflictingSections })
   }
 
   // ── Apply the swap after user confirms in the preview modal ──
@@ -910,10 +929,20 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%", tableLayout:"fixed" as const }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", width:70, minWidth:60, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {sectionPeriods.map((p, pi) => (
-                <PeriodCol key={p.id} p={p} times={sectionTimes.get(p.id) ?? periodTimes.get(p.id)}
-                  onShiftLeft={() => handleShift(pi, -1)} onShiftRight={() => handleShift(pi, 1)} />
-              ))}
+              {sectionPeriods.map(p => {
+                const gi = periods.findIndex(pp => pp.id === p.id)
+                return (
+                  <PeriodCol key={p.id} p={p} times={sectionTimes.get(p.id) ?? periodTimes.get(p.id)}
+                    editMode={editMode}
+                    isDragSrc={gi >= 0 && colDragIdx === gi}
+                    isDragOver={gi >= 0 && colDragOverIdx === gi}
+                    onDragStart={() => setColDragIdx(gi)}
+                    onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                    onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                    onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                  />
+                )
+              })}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => {
@@ -1011,11 +1040,25 @@ export function TimetablePage() {
               {sectionPeriodsT.map((p, pi) => {
                 const isBreak = p.type !== "class"
                 const times = sectionTimesT.get(p.id) ?? periodTimes.get(p.id)
+                const giCT = periods.findIndex(pp => pp.id === p.id)
+                const canDragCT = editMode && !isBreak && giCT >= 0
+                const isSrcCT   = canDragCT && colDragIdx === giCT
+                const isOverCT  = canDragCT && colDragOverIdx === giCT
                 return (
                   <tr key={p.id} style={{ background: isBreak?"#fffbeb":pi%2===0?"#fff":"#FAFAFE" }}>
-                    <td style={{ padding:"6px 10px", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                    <td
+                      draggable={canDragCT}
+                      onDragStart={canDragCT ? e => { e.dataTransfer.effectAllowed = "move"; setColDragIdx(giCT) } : undefined}
+                      onDragEnd={canDragCT ? () => { setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      onDragOver={canDragCT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== giCT) setColDragOverIdx(giCT) } : undefined}
+                      onDrop={canDragCT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== giCT) handleShift(colDragIdx, giCT); setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, cursor: canDragCT ? "grab" : "default", opacity: isSrcCT ? 0.6 : 1, userSelect:"none" as const,
+                        border: isOverCT ? "2px dashed #7C6FE0" : isSrcCT ? "2px dashed #d6d3f5" : "1px solid #E8E4FF",
+                        background: isOverCT ? "#7C6FE0" : isSrcCT ? "#d6d3f5" : undefined,
+                      }}>
+                      <div style={{ fontWeight:700, fontSize:11, color: isOverCT ? "#fff" : isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
+                      {times && <div style={{ fontSize:9, color: isOverCT ? "rgba(255,255,255,0.75)" : "#8B87AD" }}>{times.start} → {times.end}</div>}
+                      {canDragCT && <div style={{ fontSize:8, color: isOverCT?"rgba(255,255,255,0.75)":isSrcCT?"#7C6FE0":"#C4BFEA", marginTop:1 }} title="Drag to swap row">⠿</div>}
                     </td>
                     {usedDays.map(day => {
                       const isDayOff = offDaysT.has(day)
@@ -1110,7 +1153,20 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {teacherPeriods.map(p => <PeriodCol key={p.id} p={p} times={teacherTimes.get(p.id)} />)}
+              {teacherPeriods.map(p => {
+                const gi = periods.findIndex(pp => pp.id === p.id)
+                return (
+                  <PeriodCol key={p.id} p={p} times={teacherTimes.get(p.id)}
+                    editMode={editMode}
+                    isDragSrc={gi >= 0 && colDragIdx === gi}
+                    isDragOver={gi >= 0 && colDragOverIdx === gi}
+                    onDragStart={() => setColDragIdx(gi)}
+                    onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                    onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                    onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                  />
+                )
+              })}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
@@ -1255,11 +1311,25 @@ export function TimetablePage() {
                 // For mixed lunch rows: precompute per-day lunch status
                 const mixedLunchBreak = (!isFullLunch && p.type === 'lunch') ? cwBreaksTTT?.find(b => b.id === p.id) : null
                 const mixedPrevPeriod = mixedLunchBreak ? classPeriods[mixedLunchBreak.afterPeriod - 1] : null
+                const giTTT = periods.findIndex(pp => pp.id === p.id)
+                const canDragTTT = editMode && !isBreak && giTTT >= 0
+                const isSrcTTT   = canDragTTT && colDragIdx === giTTT
+                const isOverTTT  = canDragTTT && colDragOverIdx === giTTT
                 return (
                   <tr key={p.id} style={{ background: rowBg }}>
-                    <td style={{ padding:"6px 10px", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                    <td
+                      draggable={canDragTTT}
+                      onDragStart={canDragTTT ? e => { e.dataTransfer.effectAllowed = "move"; setColDragIdx(giTTT) } : undefined}
+                      onDragEnd={canDragTTT ? () => { setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      onDragOver={canDragTTT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== giTTT) setColDragOverIdx(giTTT) } : undefined}
+                      onDrop={canDragTTT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== giTTT) handleShift(colDragIdx, giTTT); setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, cursor: canDragTTT ? "grab" : "default", opacity: isSrcTTT ? 0.6 : 1, userSelect:"none" as const,
+                        border: isOverTTT ? "2px dashed #7C6FE0" : isSrcTTT ? "2px dashed #d6d3f5" : "1px solid #E8E4FF",
+                        background: isOverTTT ? "#7C6FE0" : isSrcTTT ? "#d6d3f5" : undefined,
+                      }}>
+                      <div style={{ fontWeight:700, fontSize:11, color: isOverTTT ? "#fff" : isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
+                      {times && <div style={{ fontSize:9, color: isOverTTT ? "rgba(255,255,255,0.75)" : "#8B87AD" }}>{times.start} → {times.end}</div>}
+                      {canDragTTT && <div style={{ fontSize:8, color: isOverTTT?"rgba(255,255,255,0.75)":isSrcTTT?"#7C6FE0":"#C4BFEA", marginTop:1 }} title="Drag to swap row">⠿</div>}
                     </td>
                     {usedDays.map(day => {
                       // ── Full lunch row → all day cells show Lunch Break ──
@@ -1368,7 +1438,17 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {periods.map(p => <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)} />)}
+              {periods.map((p, gi) => (
+                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)}
+                  editMode={editMode}
+                  isDragSrc={colDragIdx === gi}
+                  isDragOver={colDragOverIdx === gi}
+                  onDragStart={() => setColDragIdx(gi)}
+                  onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                  onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                  onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                />
+              ))}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
@@ -1452,11 +1532,24 @@ export function TimetablePage() {
               {periods.map((p, pi) => {
                 const isBreak = p.type !== "class"
                 const times = periodTimes.get(p.id)
+                const canDragST = editMode && !isBreak
+                const isSrcST   = canDragST && colDragIdx === pi
+                const isOverST  = canDragST && colDragOverIdx === pi
                 return (
                   <tr key={p.id} style={{ background: isBreak?"#fffbeb":pi%2===0?"#fff":"#FAFAFE" }}>
-                    <td style={{ padding:"6px 10px", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                    <td
+                      draggable={canDragST}
+                      onDragStart={canDragST ? e => { e.dataTransfer.effectAllowed = "move"; setColDragIdx(pi) } : undefined}
+                      onDragEnd={canDragST ? () => { setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      onDragOver={canDragST ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== pi) setColDragOverIdx(pi) } : undefined}
+                      onDrop={canDragST ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== pi) handleShift(colDragIdx, pi); setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, cursor: canDragST ? "grab" : "default", opacity: isSrcST ? 0.6 : 1, userSelect:"none" as const,
+                        border: isOverST ? "2px dashed #7C6FE0" : isSrcST ? "2px dashed #d6d3f5" : "1px solid #E8E4FF",
+                        background: isOverST ? "#7C6FE0" : isSrcST ? "#d6d3f5" : undefined,
+                      }}>
+                      <div style={{ fontWeight:700, fontSize:11, color: isOverST ? "#fff" : isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
+                      {times && <div style={{ fontSize:9, color: isOverST ? "rgba(255,255,255,0.75)" : "#8B87AD" }}>{times.start} → {times.end}</div>}
+                      {canDragST && <div style={{ fontSize:8, color: isOverST?"rgba(255,255,255,0.75)":isSrcST?"#7C6FE0":"#C4BFEA", marginTop:1 }} title="Drag to swap row">⠿</div>}
                     </td>
                     {usedDays.map(day => {
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
@@ -1524,7 +1617,17 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {periods.map(p => <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)} />)}
+              {periods.map((p, gi) => (
+                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)}
+                  editMode={editMode}
+                  isDragSrc={colDragIdx === gi}
+                  isDragOver={colDragOverIdx === gi}
+                  onDragStart={() => setColDragIdx(gi)}
+                  onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                  onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                  onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                />
+              ))}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
@@ -1600,11 +1703,24 @@ export function TimetablePage() {
               {periods.map((p, pi) => {
                 const isBreak = p.type !== "class"
                 const times = periodTimes.get(p.id)
+                const canDragRT = editMode && !isBreak
+                const isSrcRT   = canDragRT && colDragIdx === pi
+                const isOverRT  = canDragRT && colDragOverIdx === pi
                 return (
                   <tr key={p.id} style={{ background: isBreak?"#fffbeb":pi%2===0?"#fff":"#FAFAFE" }}>
-                    <td style={{ padding:"6px 10px", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                    <td
+                      draggable={canDragRT}
+                      onDragStart={canDragRT ? e => { e.dataTransfer.effectAllowed = "move"; setColDragIdx(pi) } : undefined}
+                      onDragEnd={canDragRT ? () => { setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      onDragOver={canDragRT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== pi) setColDragOverIdx(pi) } : undefined}
+                      onDrop={canDragRT ? e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== pi) handleShift(colDragIdx, pi); setColDragIdx(null); setColDragOverIdx(null) } : undefined}
+                      style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, cursor: canDragRT ? "grab" : "default", opacity: isSrcRT ? 0.6 : 1, userSelect:"none" as const,
+                        border: isOverRT ? "2px dashed #7C6FE0" : isSrcRT ? "2px dashed #d6d3f5" : "1px solid #E8E4FF",
+                        background: isOverRT ? "#7C6FE0" : isSrcRT ? "#d6d3f5" : undefined,
+                      }}>
+                      <div style={{ fontWeight:700, fontSize:11, color: isOverRT ? "#fff" : isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
+                      {times && <div style={{ fontSize:9, color: isOverRT ? "rgba(255,255,255,0.75)" : "#8B87AD" }}>{times.start} → {times.end}</div>}
+                      {canDragRT && <div style={{ fontSize:8, color: isOverRT?"rgba(255,255,255,0.75)":isSrcRT?"#7C6FE0":"#C4BFEA", marginTop:1 }} title="Drag to swap row">⠿</div>}
                     </td>
                     {usedDays.map(day => {
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
