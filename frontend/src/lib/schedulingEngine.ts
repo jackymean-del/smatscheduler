@@ -592,6 +592,37 @@ export function solveTimetable(input: SolverInput): SolverOutput {
     })
   })
 
+  // ── Day-distribution quota: spread each subject evenly across days ──────
+  //   For each (section, subject), pre-budget how many times it should appear
+  //   on each day so that empty slots are distributed rather than clumped at
+  //   the end of the week.
+  //
+  //   Algorithm:  target = 4, days = 5
+  //     offset = 2  (staggered per section+subject so all subjects don't land
+  //                  on the same day)
+  //     quota[Wed]=1, quota[Thu]=1, quota[Fri]=1, quota[Mon]=1, rest = 0
+  //
+  //   The quota is used as a "soft preference" in the subject scoring below —
+  //   subjects still below their daily budget get a priority bonus so the
+  //   solver fills budgeted days first, spreading empty slots evenly.
+  const subjectDayQuota: Record<string, Record<string, Record<string, number>>> = {}
+  sections.forEach((sec, si) => {
+    subjectDayQuota[sec.name] = {}
+    subjects.forEach((sub, subi) => {
+      const target = targetPeriods[sec.name]?.[sub.name] ?? 0
+      if (!target) return
+      // Stagger starting day so different subjects land on different days
+      const offset = (si * 7 + subi * 13) % workDays.length
+      const quota: Record<string, number> = {}
+      workDays.forEach(d => { quota[d] = 0 })
+      for (let i = 0; i < target; i++) {
+        const d = workDays[(offset + i) % workDays.length]
+        quota[d] = (quota[d] ?? 0) + 1
+      }
+      subjectDayQuota[sec.name][sub.name] = quota
+    })
+  })
+
   // ── AI teacher-load balancing baselines ──
   //   Compute the total periods we need to place across all sections,
   //   then derive a target weekly load per teacher. The scorer prefers
@@ -830,9 +861,27 @@ export function solveTimetable(input: SolverInput): SolverOutput {
           return
         }
 
-        // Rotate subject selection to distribute evenly
-        const subIdx = (si * 11 + di * 7 + pi * 3) % availableSubs.length
-        const chosenSub = availableSubs[subIdx]
+        // ── Subject selection: day-budget scoring for even empty-slot spread ──
+        //
+        //   Each subject has a per-day "budget" (subjectDayQuota) computed by
+        //   spreading its weekly target evenly across work-days with a staggered
+        //   start.  We score each candidate subject so that slots still within
+        //   their daily budget get a strong bonus (+25), on-quota get neutral (0),
+        //   and over-quota get a soft penalty (−10, but still allowed as a
+        //   fallback to avoid leaving a period blank unnecessarily).
+        //
+        //   Tie-break: a small rotation ensures variety when multiple subjects
+        //   have the same day-budget status.
+        const scoredSubs = availableSubs.map((sub, idx) => {
+          const quota = subjectDayQuota[sec.name]?.[sub.name]?.[day] ?? 0
+          const todayDone = Object.values(classTT[sec.name][day] ?? {})
+            .filter(c => c?.subject === sub.name).length
+          const dayScore = todayDone < quota ? 25 : todayDone === quota ? 0 : -10
+          // Rotation tie-break: keeps subject variety when several score equally
+          const rotScore = ((si * 11 + di * 7 + pi * 3) + idx * 3) % 7
+          return { sub, score: dayScore + rotScore }
+        }).sort((a, b) => b.score - a.score)
+        const chosenSub = scoredSubs[0]?.sub ?? availableSubs[0]
 
         // ── Teacher eligibility ───────────────────────────────
         // Priority 1: teacher explicitly assigned to this section+subject via matrix
