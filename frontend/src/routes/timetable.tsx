@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import { useTimetableStore } from "@/store/timetableStore"
 import { EditCellModal } from "@/components/modals/EditCellModal"
 import { CalendarView } from "@/components/CalendarView"
@@ -290,13 +290,14 @@ function BreakCell({ p }: { p:Period }) {
 type CellOption = { subject: string; teacher: string; room: string }
 function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher, showTeacher, showRoom,
   onClick, dragOver, onDragOver, onDrop, onDragLeave, absentHighlight, options,
-  isDraggable, onDragStart, onDelete, editMode,
+  isDraggable, onDragStart, onDelete, editMode, isDropTarget,
 }:{
   subject?:string; teacher?:string; room?:string; isClassTeacher?:boolean; isSub?:boolean; subTeacher?:string;
   showTeacher:boolean; showRoom:boolean; onClick?:()=>void;
   dragOver?:boolean; onDragOver?:(e:React.DragEvent)=>void; onDrop?:(e:React.DragEvent)=>void; onDragLeave?:()=>void;
   absentHighlight?:boolean; options?: CellOption[];
   isDraggable?:boolean; onDragStart?:(e:React.DragEvent)=>void; onDelete?:()=>void; editMode?:boolean;
+  isDropTarget?:boolean;
 }) {
   const [hovered, setHovered] = useState(false)
   const sharedTdProps = {
@@ -307,10 +308,10 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
     onMouseLeave: () => setHovered(false),
   }
   if (!subject) return (
-    <td style={{ border:"1px solid #E8E4FF", padding:2, position:"relative" as const }}
+    <td style={{ border: dragOver?"2px dashed #7C6FE0": isDropTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, position:"relative" as const, background: dragOver?"#EDE9FF": isDropTarget?"#F0EDFF":undefined }}
       {...sharedTdProps}>
-      <div onClick={onClick} style={{ height:44, background: dragOver?"#EDE9FF":"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color: dragOver?"#7C6FE0":"#cbd5e1", fontSize:10, cursor: dragOver?"copy":"default", border: dragOver?"2px dashed #7C6FE0":"none", transition:"all 0.12s" }}>
-        {dragOver ? "Drop here" : "—"}
+      <div onClick={onClick} style={{ height:44, background: dragOver?"#EDE9FF": isDropTarget?"#EDE9FF80":"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color: dragOver||isDropTarget?"#7C6FE0":"#cbd5e1", fontSize:10, cursor: dragOver?"copy":isDropTarget?"copy":"default", border:"none", transition:"all 0.12s" }}>
+        {dragOver ? "Drop here" : isDropTarget ? "↓" : "—"}
       </div>
     </td>
   )
@@ -345,7 +346,7 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   const effectiveRoom    = room    || options?.[0]?.room
   const colorClass = getSubjectColor(subject)
   return (
-    <td style={{ border: dragOver?"2px dashed #7C6FE0":"1px solid #E8E4FF", padding:2, position:"relative" as const, background: dragOver?"#EDE9FF":undefined }}
+    <td style={{ border: dragOver?"2px dashed #7C6FE0": isDropTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, position:"relative" as const, background: dragOver?"#EDE9FF": isDropTarget?"#F8F7FF":undefined }}
       {...sharedTdProps}>
       <div className={colorClass}
         draggable={isDraggable}
@@ -380,6 +381,44 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   )
 }
 
+// ── Reusable drag-enabled teacher-view cell ────────────────
+function TeacherCell({ colorClass, cell, showRoom, editMode, dragOver, isDropTarget, dragProps, onDragStart, onDelete }: {
+  colorClass: string; cell: any; showRoom: boolean; editMode: boolean;
+  dragOver: boolean; isDropTarget: boolean; dragProps: any;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDelete?: () => void;
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <td style={{ border: dragOver?"2px dashed #7C6FE0":isDropTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, position:"relative" as const, background: dragOver?"#EDE9FF":isDropTarget?"#F8F7FF":undefined }}
+      {...dragProps}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div className={colorClass}
+        draggable={editMode && !!onDragStart}
+        onDragStart={editMode ? onDragStart : undefined}
+        style={{ borderRadius:5, padding:"4px 7px", minHeight:44, border:cell.conflict?"2px solid #fca5a5":"none", position:"relative" as const, cursor: editMode&&onDragStart?"grab":"default" }}>
+        {cell.conflict && <span style={{ position:"absolute" as const, top:2, right:3, fontSize:8, color:"#dc2626" }}>⚠</span>}
+        <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{cell.sectionName}</div>
+        <div style={{ fontSize:9, color:"#475569", marginTop:2 }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
+        {cell.isClassTeacher && <div style={{ fontSize:8, color:"#7C6FE0" }}>★ Class Teacher</div>}
+        {showRoom && cell.room && <div style={{ fontSize:8, opacity:0.55 }}>{cell.room}</div>}
+      </div>
+      {editMode && hovered && (
+        <div style={{ position:"absolute" as const, top:3, right:3, display:"flex", gap:2, zIndex:10 }}>
+          {onDelete && (
+            <button onClick={e => { e.stopPropagation(); onDelete() }}
+              title="Clear period"
+              style={{ width:16, height:16, borderRadius:"50%", border:"none", background:"#ef4444", color:"#fff", fontSize:9, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>✕</button>
+          )}
+          {onDragStart && (
+            <div style={{ width:14, height:14, borderRadius:3, background:"rgba(124,111,224,0.2)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"grab", fontSize:8, color:"#7C6FE0" }} title="Drag to swap">⠿</div>
+          )}
+        </div>
+      )}
+    </td>
+  )
+}
+
 // ══════════════════════════════════════════════════════════════
 export function TimetablePage() {
   const store = useTimetableStore()
@@ -400,6 +439,13 @@ export function TimetablePage() {
   const [dragItem, setDragItem] = useState<{section:string;day:string;periodId:string}|null>(null)
   const [dragOverCell, setDragOverCell] = useState<string|null>(null) // key = "sec|day|pid"
   const [publishConfirm, setPublishConfirm] = useState(false)
+
+  // ── Undo / redo history ──────────────────────────────────
+  const [classTTHistory, setClassTTHistory] = useState<typeof classTT[]>([])
+  const [classTTFuture,  setClassTTFuture]  = useState<typeof classTT[]>([])
+
+  // ── Pool panel section filter ────────────────────────────
+  const [poolFilterSection, setPoolFilterSection] = useState("ALL")
 
   // ── Period Pool panel state ──────────────────────────────
   const [poolPanelOpen, setPoolPanelOpen] = useState(false)
@@ -550,6 +596,68 @@ export function TimetablePage() {
   const pickHomeRoom = (sectionName: string): string =>
     (sections.find(s => s.name === sectionName) as any)?.room ?? ""
 
+  // ── commitTT — all mutations go through here for undo/redo + teacherTT rebuild ──
+  const commitTT = (newTT: typeof classTT) => {
+    setClassTTHistory(h => [...h.slice(-49), classTT])
+    setClassTTFuture([])
+    setClassTT(newTT)
+    const ntt = { ...teacherTT }
+    rebuildTeacherTT(newTT, ntt, config.workDays)
+    setTeacherTT(ntt)
+  }
+
+  // ── Keyboard shortcuts (Esc, Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo) ──
+  // Use a ref so the effect doesn't re-register on every render
+  const kbRef = useRef({ classTT, classTTHistory, classTTFuture, teacherTT, workDays: config.workDays,
+    setDragItem, setPoolDragItem, setDragOverCell, setEditTarget,
+    setClassTT, setTeacherTT, setClassTTHistory, setClassTTFuture,
+  })
+  kbRef.current = { classTT, classTTHistory, classTTFuture, teacherTT, workDays: config.workDays,
+    setDragItem, setPoolDragItem, setDragOverCell, setEditTarget,
+    setClassTT, setTeacherTT, setClassTTHistory, setClassTTFuture,
+  }
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const r = kbRef.current
+      // Escape — dismiss drag and modals
+      if (e.key === 'Escape') {
+        r.setDragItem(null); r.setPoolDragItem(null); r.setDragOverCell(null); r.setEditTarget(null)
+        return
+      }
+      const ctrl = e.ctrlKey || e.metaKey
+      // Undo: Ctrl+Z
+      if (ctrl && !e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        if (!r.classTTHistory.length) return
+        const prev = r.classTTHistory[r.classTTHistory.length - 1]
+        r.setClassTTHistory(r.classTTHistory.slice(0, -1))
+        r.setClassTTFuture([r.classTT, ...r.classTTFuture.slice(0, 49)])
+        r.setClassTT(prev)
+        const ntt = { ...r.teacherTT }
+        rebuildTeacherTT(prev, ntt, r.workDays)
+        r.setTeacherTT(ntt)
+        return
+      }
+      // Redo: Ctrl+Y or Ctrl+Shift+Z
+      if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault()
+        if (!r.classTTFuture.length) return
+        const next = r.classTTFuture[0]
+        r.setClassTTHistory([...r.classTTHistory.slice(-49), r.classTT])
+        r.setClassTTFuture(r.classTTFuture.slice(1))
+        r.setClassTT(next)
+        const ntt = { ...r.teacherTT }
+        rebuildTeacherTT(next, ntt, r.workDays)
+        r.setTeacherTT(ntt)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, []) // intentionally empty — we use kbRef for fresh values
+
+  // ── isDragging — true while any drag is active ───────────
+  const isDragging = !!poolDragItem || !!dragItem
+
   // ── DnD handlers ──
   const handleDragStart = (e: React.DragEvent, item: {section:string;day:string;periodId:string}) => {
     setDragItem(item)
@@ -576,7 +684,7 @@ export function TimetablePage() {
         newTT[section] = { ...newTT[section] }
         newTT[section][day] = { ...(newTT[section][day] ?? {}) }
         newTT[section][day][periodId] = { subject: poolDragItem.subject, teacher, room }
-        setClassTT(newTT)
+        commitTT(newTT)
       }
       setPoolDragItem(null)
       return
@@ -585,7 +693,6 @@ export function TimetablePage() {
     const from = dragItem
     setDragItem(null)
     // Direct cell-to-cell swap — no modal
-    if (from.section !== section) return  // cross-section swap not allowed
     const fromCell = classTT[from.section]?.[from.day]?.[from.periodId]
     const toCell   = classTT[section]?.[day]?.[periodId]
     if (!fromCell?.subject) return  // nothing to drag
@@ -600,20 +707,20 @@ export function TimetablePage() {
       alert(`Cannot swap: teacher conflict detected.`)
       return
     }
-    const newTT = { ...classTT }
-    newTT[section] = { ...newTT[section] }
-    newTT[section][day] = { ...(newTT[section][day] ?? {}) }
-    newTT[from.section] = { ...newTT[from.section] }
-    newTT[from.section][from.day] = { ...(newTT[from.section][from.day] ?? {}) }
+    const newTT2 = { ...classTT }
+    newTT2[section] = { ...newTT2[section] }
+    newTT2[section][day] = { ...(newTT2[section][day] ?? {}) }
+    newTT2[from.section] = { ...newTT2[from.section] }
+    newTT2[from.section][from.day] = { ...(newTT2[from.section][from.day] ?? {}) }
     // Swap the two cells (or move if target is empty)
     if (toCell?.subject) {
-      newTT[section][day][periodId] = fromCell
-      newTT[from.section][from.day][from.periodId] = toCell
+      newTT2[section][day][periodId] = fromCell
+      newTT2[from.section][from.day][from.periodId] = toCell
     } else {
-      newTT[section][day][periodId] = fromCell
-      delete (newTT[from.section][from.day] as any)[from.periodId]
+      newTT2[section][day][periodId] = fromCell
+      delete (newTT2[from.section][from.day] as any)[from.periodId]
     }
-    setClassTT(newTT)
+    commitTT(newTT2)
   }
 
   // ── Absent teacher slots on selected day ──────────────────
@@ -733,6 +840,7 @@ export function TimetablePage() {
                           showTeacher={showTeacher} showRoom={showRoom}
                           absentHighlight={highlight}
                           dragOver={dragOverCell === cellKey}
+                          isDropTarget={isDragging && (poolDragItem?.section === sn || dragItem?.section === sn)}
                           onDragOver={() => setDragOverCell(cellKey)}
                           onDrop={e => handleDrop(e, sn, day, p.id)}
                           onDragLeave={() => setDragOverCell(null)}
@@ -744,7 +852,7 @@ export function TimetablePage() {
                             newTT[sn] = { ...newTT[sn] }
                             newTT[sn][day] = { ...newTT[sn][day] }
                             delete (newTT[sn][day] as any)[p.id]
-                            setClassTT(newTT)
+                            commitTT(newTT)
                           }}
                           editMode={editMode}
                         />
@@ -818,6 +926,7 @@ export function TimetablePage() {
                           showTeacher={showTeacher} showRoom={showRoom}
                           absentHighlight={highlight}
                           dragOver={dragOverCell === cellKeyT}
+                          isDropTarget={isDragging && (poolDragItem?.section === sn || dragItem?.section === sn)}
                           onDragOver={() => setDragOverCell(cellKeyT)}
                           onDrop={e => handleDrop(e, sn, day, p.id)}
                           onDragLeave={() => setDragOverCell(null)}
@@ -829,7 +938,7 @@ export function TimetablePage() {
                             newTT[sn] = { ...newTT[sn] }
                             newTT[sn][day] = { ...newTT[sn][day] }
                             delete (newTT[sn][day] as any)[p.id]
-                            setClassTT(newTT)
+                            commitTT(newTT)
                           }}
                           editMode={editMode}
                         />
@@ -924,6 +1033,16 @@ export function TimetablePage() {
                     if (p.type !== "class") return <BreakCell key={p.id} p={p} />
                     // ── Class period ───────────────────────────────────
                     const cell = sch[day]?.[p.id]
+                    // Derive section name for DnD: filled cell has sectionName; free cell can accept pool if teacher teaches that section
+                    const ttSecName = cell?.sectionName ?? (poolDragItem && tdata.classes.includes(poolDragItem.section) ? poolDragItem.section : "")
+                    const ttCellKey = ttSecName ? `${ttSecName}|${day}|${p.id}` : `__tt|${day}|${p.id}`
+                    const ttDragOver = dragOverCell === ttCellKey && !!ttSecName
+                    const ttIsTarget = isDragging && !!ttSecName && (poolDragItem?.section === ttSecName || dragItem?.section === ttSecName)
+                    const ttDragProps = ttSecName ? {
+                      onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttCellKey) },
+                      onDrop:     (e: React.DragEvent) => handleDrop(e, ttSecName, day, p.id),
+                      onDragLeave: () => setDragOverCell(null),
+                    } : {}
                     if (!cell?.subject) {
                       if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return (
                         <td key={p.id} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, color:"#D4920E", fontSize:9, fontStyle:"italic", padding:6 }}>
@@ -951,22 +1070,28 @@ export function TimetablePage() {
                         )
                       }
                       return (
-                        <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div style={{ height:44, background:"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:9, fontStyle:"italic" }}>Free</div>
+                        <td key={p.id} {...ttDragProps}
+                          style={{ border: ttDragOver?"2px dashed #7C6FE0":ttIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: ttDragOver?"#EDE9FF":ttIsTarget?"#F0EDFF":undefined }}>
+                          <div style={{ height:44, background: ttDragOver?"#EDE9FF":ttIsTarget?"#EDE9FF80":"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color: ttDragOver||ttIsTarget?"#7C6FE0":"#cbd5e1", fontSize:9, fontStyle:"italic" }}>
+                            {ttDragOver ? "Drop here" : ttIsTarget ? "↓" : "Free"}
+                          </div>
                         </td>
                       )
                     }
                     const colorClass = getSubjectColor(cell.subject.split(" (")[0])
                     return (
-                      <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                        <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:44, border:cell.conflict?"2px solid #fca5a5":"none", position:"relative" as const }}>
-                          {cell.conflict && <span style={{ position:"absolute" as const, top:2, right:3, fontSize:8, color:"#dc2626" }}>⚠</span>}
-                          <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{cell.sectionName}</div>
-                          <div style={{ fontSize:9, color:"#475569", marginTop:2 }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
-                          {cell.isClassTeacher && <div style={{ fontSize:8, color:"#7C6FE0" }}>★ Class Teacher</div>}
-                          {showRoom && cell.room && <div style={{ fontSize:8, opacity:0.55 }}>{cell.room}</div>}
-                        </div>
-                      </td>
+                      <TeacherCell key={p.id} colorClass={colorClass} cell={cell} showRoom={showRoom}
+                        editMode={editMode} dragOver={ttDragOver} isDropTarget={ttIsTarget}
+                        dragProps={ttDragProps}
+                        onDragStart={editMode ? e => handleDragStart(e, {section:ttSecName, day, periodId:p.id}) : undefined}
+                        onDelete={editMode ? () => {
+                          const newTT = { ...classTT }
+                          newTT[ttSecName] = { ...newTT[ttSecName] }
+                          newTT[ttSecName][day] = { ...newTT[ttSecName][day] }
+                          delete (newTT[ttSecName][day] as any)[p.id]
+                          commitTT(newTT)
+                        } : undefined}
+                      />
                     )
                   })}
                 </tr>
@@ -1047,14 +1172,21 @@ export function TimetablePage() {
                       }
                       // ── Other break (assembly, morning break) ────────────
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
-                      // ── Class period ─────────────────────────────────────
+                      // ── Class period (transposed teacher) ────────────────
                       const cell = sch[day]?.[p.id]
+                      const ttTSecName = cell?.sectionName ?? (poolDragItem && tdata.classes.includes(poolDragItem.section) ? poolDragItem.section : "")
+                      const ttTKey = ttTSecName ? `${ttTSecName}|${day}|${p.id}` : `__ttt|${day}|${p.id}`
+                      const ttTDragOver = dragOverCell === ttTKey && !!ttTSecName
+                      const ttTIsTarget = isDragging && !!ttTSecName && (poolDragItem?.section === ttTSecName || dragItem?.section === ttTSecName)
+                      const ttTDragProps = ttTSecName ? {
+                        onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttTKey) },
+                        onDrop:     (e: React.DragEvent) => handleDrop(e, ttTSecName, day, p.id),
+                        onDragLeave: () => setDragOverCell(null),
+                      } : {}
                       if (!cell?.subject) {
                         if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return (
                           <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, color:"#D4920E", fontSize:9, fontStyle:"italic", padding:6 }}>Lunch Break</td>
                         )
-                        // Upcoming lunch notification: if any of teacher's sections
-                        // has a lunch break immediately after this class period
                         const periodN = classPeriods.findIndex(cp => cp.id === p.id) + 1
                         if (periodN > 0 && cwBreaksTTT?.length) {
                           const lunchSec = tdata.classes.find(cls => {
@@ -1074,20 +1206,28 @@ export function TimetablePage() {
                           )
                         }
                         return (
-                          <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                            <div style={{ height:42, background:"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:9, fontStyle:"italic" }}>Free</div>
+                          <td key={day} {...ttTDragProps}
+                            style={{ border: ttTDragOver?"2px dashed #7C6FE0":ttTIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: ttTDragOver?"#EDE9FF":ttTIsTarget?"#F0EDFF":undefined }}>
+                            <div style={{ height:42, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: ttTDragOver||ttTIsTarget?"#7C6FE0":"#cbd5e1", fontSize:9, fontStyle:"italic" }}>
+                              {ttTDragOver ? "Drop here" : ttTIsTarget ? "↓" : "Free"}
+                            </div>
                           </td>
                         )
                       }
                       const colorClass = getSubjectColor(cell.subject.split(" (")[0])
                       return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:42 }}>
-                            <div style={{ fontSize:10, fontWeight:700 }}>{cell.sectionName}</div>
-                            <div style={{ fontSize:9, color:"#475569" }}>{cell.subject.replace(/\s*\(.*\)/, "")}</div>
-                            {(cell as any).room && <div style={{ fontSize:8, opacity:0.55 }}>{(cell as any).room}</div>}
-                          </div>
-                        </td>
+                        <TeacherCell key={day} colorClass={colorClass} cell={cell} showRoom={showRoom}
+                          editMode={editMode} dragOver={ttTDragOver} isDropTarget={ttTIsTarget}
+                          dragProps={ttTDragProps}
+                          onDragStart={editMode ? e => handleDragStart(e, {section:ttTSecName, day, periodId:p.id}) : undefined}
+                          onDelete={editMode ? () => {
+                            const newTT = { ...classTT }
+                            newTT[ttTSecName] = { ...newTT[ttTSecName] }
+                            newTT[ttTSecName][day] = { ...newTT[ttTSecName][day] }
+                            delete (newTT[ttTSecName][day] as any)[p.id]
+                            commitTT(newTT)
+                          } : undefined}
+                        />
                       )
                     })}
                   </tr>
@@ -1128,15 +1268,32 @@ export function TimetablePage() {
                   {periods.map(p => {
                     if (p.type !== "class") return <BreakCell key={p.id} p={p} />
                     const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
+                    // DnD: use first hit section (or pool chip section if dragging this subject)
+                    const subSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
+                    const subCellKey = subSecName ? `${subSecName}|${day}|${p.id}` : ""
+                    const subDragOver = !!subCellKey && dragOverCell === subCellKey
+                    const subIsTarget = isDragging && !!subSecName && (poolDragItem?.section === subSecName || dragItem?.section === subSecName)
+                    const subDragProps = subSecName ? {
+                      onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(subCellKey) },
+                      onDrop: (e: React.DragEvent) => handleDrop(e, subSecName, day, p.id),
+                      onDragLeave: () => setDragOverCell(null),
+                    } : {}
                     if (!hits.length) return (
-                      <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                        <div style={{ height:44, background:"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:10 }}>—</div>
+                      <td key={p.id} {...subDragProps}
+                        style={{ border: subDragOver?"2px dashed #7C6FE0":subIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: subDragOver?"#EDE9FF":subIsTarget?"#F0EDFF":undefined }}>
+                        <div style={{ height:44, background: subDragOver?"#EDE9FF":"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: subDragOver||subIsTarget?"#7C6FE0":"#cbd5e1", fontSize:10 }}>
+                          {subDragOver ? "Drop here" : subIsTarget ? "↓" : "—"}
+                        </div>
                       </td>
                     )
                     const colorClass = getSubjectColor(subName)
                     return (
-                      <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                        <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:44 }}>
+                      <td key={p.id} {...subDragProps}
+                        style={{ border: subDragOver?"2px dashed #7C6FE0":subIsTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: subDragOver?"#EDE9FF":subIsTarget?"#F8F7FF":undefined }}>
+                        <div className={colorClass}
+                          draggable={editMode && !!subSecName}
+                          onDragStart={editMode && subSecName ? e => handleDragStart(e, {section:subSecName, day, periodId:p.id}) : undefined}
+                          style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:editMode&&subSecName?"grab":"default" }}>
                           {hits.map(sec => {
                             const cell = classTT[sec.name][day][p.id]
                             return (
@@ -1195,15 +1352,31 @@ export function TimetablePage() {
                     {usedDays.map(day => {
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
                       const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
+                      const subTSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
+                      const subTKey = subTSecName ? `${subTSecName}|${day}|${p.id}` : ""
+                      const subTDragOver = !!subTKey && dragOverCell === subTKey
+                      const subTIsTarget = isDragging && !!subTSecName && (poolDragItem?.section === subTSecName || dragItem?.section === subTSecName)
+                      const subTDragProps = subTSecName ? {
+                        onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(subTKey) },
+                        onDrop: (e: React.DragEvent) => handleDrop(e, subTSecName, day, p.id),
+                        onDragLeave: () => setDragOverCell(null),
+                      } : {}
                       if (!hits.length) return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div style={{ height:38, background:"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:10 }}>—</div>
+                        <td key={day} {...subTDragProps}
+                          style={{ border: subTDragOver?"2px dashed #7C6FE0":subTIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: subTDragOver?"#EDE9FF":subTIsTarget?"#F0EDFF":undefined }}>
+                          <div style={{ height:38, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: subTDragOver||subTIsTarget?"#7C6FE0":"#cbd5e1", fontSize:10 }}>
+                            {subTDragOver ? "Drop here" : subTIsTarget ? "↓" : "—"}
+                          </div>
                         </td>
                       )
                       const colorClass = getSubjectColor(subName)
                       return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:38 }}>
+                        <td key={day} {...subTDragProps}
+                          style={{ border: subTDragOver?"2px dashed #7C6FE0":subTIsTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: subTDragOver?"#EDE9FF":subTIsTarget?"#F8F7FF":undefined }}>
+                          <div className={colorClass}
+                            draggable={editMode && !!subTSecName}
+                            onDragStart={editMode && subTSecName ? e => handleDragStart(e, {section:subTSecName, day, periodId:p.id}) : undefined}
+                            style={{ borderRadius:5, padding:"4px 7px", minHeight:38, cursor:editMode&&subTSecName?"grab":"default" }}>
                             {hits.map(sec => {
                               const cell = classTT[sec.name][day][p.id]
                               return (
@@ -1254,15 +1427,31 @@ export function TimetablePage() {
                       const cell = classTT[sec.name]?.[day]?.[p.id]
                       return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
                     })[0]
+                    const rmSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
+                    const rmKey = rmSecName ? `${rmSecName}|${day}|${p.id}` : ""
+                    const rmDragOver = !!rmKey && dragOverCell === rmKey
+                    const rmIsTarget = isDragging && !!rmSecName
+                    const rmDragProps = rmSecName ? {
+                      onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(rmKey) },
+                      onDrop: (e: React.DragEvent) => handleDrop(e, rmSecName, day, p.id),
+                      onDragLeave: () => setDragOverCell(null),
+                    } : {}
                     if (!hit) return (
-                      <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                        <div style={{ height:44, background:"#f0fdf4", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#D8D2FF", fontSize:10 }}>Free</div>
+                      <td key={p.id} {...rmDragProps}
+                        style={{ border: rmDragOver?"2px dashed #7C6FE0":rmIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: rmDragOver?"#EDE9FF":rmIsTarget?"#F0EDFF":undefined }}>
+                        <div style={{ height:44, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: rmDragOver||rmIsTarget?"#7C6FE0":"#D8D2FF", fontSize:10 }}>
+                          {rmDragOver ? "Drop here" : rmIsTarget ? "↓" : "Free"}
+                        </div>
                       </td>
                     )
                     const colorClass = getSubjectColor(hit.cell.subject)
                     return (
-                      <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                        <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:44 }}>
+                      <td key={p.id} {...rmDragProps}
+                        style={{ border: rmDragOver?"2px dashed #7C6FE0":rmIsTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: rmDragOver?"#EDE9FF":rmIsTarget?"#F8F7FF":undefined }}>
+                        <div className={colorClass}
+                          draggable={editMode && !!rmSecName}
+                          onDragStart={editMode && rmSecName ? e => handleDragStart(e, {section:rmSecName, day, periodId:p.id}) : undefined}
+                          style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:editMode&&rmSecName?"grab":"default" }}>
                           <div style={{ fontSize:10, fontWeight:700 }}>{hit.cell.subject}</div>
                           <div style={{ fontSize:9, color:"#475569", fontWeight:600 }}>{hit.sec}</div>
                           {showTeacher && hit.cell.teacher && <div style={{ fontSize:8, opacity:0.7 }}>{hit.cell.teacher}</div>}
@@ -1314,15 +1503,31 @@ export function TimetablePage() {
                         const cell = classTT[sec.name]?.[day]?.[p.id]
                         return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
                       })[0]
+                      const rmTSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
+                      const rmTKey = rmTSecName ? `${rmTSecName}|${day}|${p.id}` : ""
+                      const rmTDragOver = !!rmTKey && dragOverCell === rmTKey
+                      const rmTIsTarget = isDragging && !!rmTSecName
+                      const rmTDragProps = rmTSecName ? {
+                        onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(rmTKey) },
+                        onDrop: (e: React.DragEvent) => handleDrop(e, rmTSecName, day, p.id),
+                        onDragLeave: () => setDragOverCell(null),
+                      } : {}
                       if (!hit) return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div style={{ height:38, background:"#f0fdf4", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#D8D2FF", fontSize:10 }}>Free</div>
+                        <td key={day} {...rmTDragProps}
+                          style={{ border: rmTDragOver?"2px dashed #7C6FE0":rmTIsTarget?"2px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: rmTDragOver?"#EDE9FF":rmTIsTarget?"#F0EDFF":undefined }}>
+                          <div style={{ height:38, borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color: rmTDragOver||rmTIsTarget?"#7C6FE0":"#D8D2FF", fontSize:10 }}>
+                            {rmTDragOver ? "Drop here" : rmTIsTarget ? "↓" : "Free"}
+                          </div>
                         </td>
                       )
                       const colorClass = getSubjectColor(hit.cell.subject)
                       return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div className={colorClass} style={{ borderRadius:5, padding:"4px 7px", minHeight:38 }}>
+                        <td key={day} {...rmTDragProps}
+                          style={{ border: rmTDragOver?"2px dashed #7C6FE0":rmTIsTarget?"1.5px dashed #a5b4fc":"1px solid #E8E4FF", padding:2, background: rmTDragOver?"#EDE9FF":rmTIsTarget?"#F8F7FF":undefined }}>
+                          <div className={colorClass}
+                            draggable={editMode && !!rmTSecName}
+                            onDragStart={editMode && rmTSecName ? e => handleDragStart(e, {section:rmTSecName, day, periodId:p.id}) : undefined}
+                            style={{ borderRadius:5, padding:"4px 7px", minHeight:38, cursor:editMode&&rmTSecName?"grab":"default" }}>
                             <div style={{ fontSize:10, fontWeight:700 }}>{hit.cell.subject}</div>
                             <div style={{ fontSize:9, color:"#475569", fontWeight:600 }}>{hit.sec}</div>
                             {showTeacher && hit.cell.teacher && <div style={{ fontSize:8, opacity:0.7 }}>{hit.cell.teacher}</div>}
@@ -1388,43 +1593,32 @@ export function TimetablePage() {
             newTT[section] = { ...newTT[section] }
             newTT[section][day] = { ...(newTT[section][day] ?? {}) }
             newTT[section][day][periodId] = { subject: suggestedSubject, teacher, room }
-            setClassTT(newTT)
+            commitTT(newTT)
           }
         }}
         onCellSwap={(from, to) => {
-          // Get the two cells
           const fromCell = classTT[from.section]?.[from.day]?.[from.periodId]
           const toCell = classTT[to.section]?.[to.day]?.[to.periodId]
-
           const fromTeacher = fromCell?.teacher
           const toTeacher = toCell?.teacher
-
-          // Check fromCell teacher conflict at destination slot
           const fromConflict = fromTeacher && sections.some(sec =>
-            sec.name !== from.section &&
-            sec.name !== to.section &&
+            sec.name !== from.section && sec.name !== to.section &&
             classTT[sec.name]?.[to.day]?.[to.periodId]?.teacher === fromTeacher
           )
           const toConflict = toTeacher && sections.some(sec =>
-            sec.name !== from.section &&
-            sec.name !== to.section &&
+            sec.name !== from.section && sec.name !== to.section &&
             classTT[sec.name]?.[from.day]?.[from.periodId]?.teacher === toTeacher
           )
-
-          if (fromConflict || toConflict) return // conflict — don't swap
-
-          // Perform the swap
+          if (fromConflict || toConflict) return
           const newTT = { ...classTT }
           newTT[from.section] = { ...newTT[from.section] }
           newTT[from.section][from.day] = { ...newTT[from.section][from.day] }
           newTT[to.section] = { ...newTT[to.section] }
           newTT[to.section][to.day] = { ...newTT[to.section][to.day] }
-
           const temp = newTT[from.section][from.day][from.periodId]
           newTT[from.section][from.day][from.periodId] = newTT[to.section][to.day][to.periodId]
           newTT[to.section][to.day][to.periodId] = temp
-
-          setClassTT(newTT)
+          commitTT(newTT)
         }}
         absentHighlights={absentHL ? [absentHL] : []}
       />
@@ -1466,9 +1660,19 @@ export function TimetablePage() {
         <button onClick={() => setPoolPanelOpen(false)} style={{ border:"none", background:"none", fontSize:16, cursor:"pointer", color:"#6D64C0", lineHeight:1 }}>✕</button>
       </div>
 
-      {/* Hint */}
-      <div style={{ padding:"7px 12px", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF", fontSize:10, color:"#7C6FE0", lineHeight:1.4 }}>
-        Drag a chip onto an empty cell to fill it instantly
+      {/* Hint + filter */}
+      <div style={{ padding:"7px 12px 0", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF" }}>
+        <div style={{ fontSize:10, color:"#7C6FE0", lineHeight:1.4, marginBottom:6 }}>Drag a chip onto any cell to assign or replace. Changes reflect across all views.</div>
+        {poolData.length > 1 && (
+          <div style={{ display:"flex", alignItems:"center", gap:6, paddingBottom:7 }}>
+            <span style={{ fontSize:9, color:"#8B87AD", fontWeight:600 }}>Filter:</span>
+            <select value={poolFilterSection} onChange={e => setPoolFilterSection(e.target.value)}
+              style={{ flex:1, padding:"3px 6px", border:"1px solid #D8D2FF", borderRadius:5, fontSize:10, background:"#fff", outline:"none", color:"#4338ca" }}>
+              <option value="ALL">All classes</option>
+              {poolData.map(s => <option key={s.section} value={s.section}>{s.section}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Body — scrollable list */}
@@ -1478,7 +1682,7 @@ export function TimetablePage() {
             <div style={{ fontSize:32, marginBottom:8 }}>🎉</div>
             Every subject has its target periods scheduled!
           </div>
-        ) : poolData.map(sec => (
+        ) : poolData.filter(s => poolFilterSection === "ALL" || s.section === poolFilterSection).map(sec => (
           <div key={sec.section}>
             {/* Section header — hidden in teacher view (section name embedded in chip label) */}
             {!(viewMode === 'teacher' && selectedEntity !== 'ALL') && (
@@ -1715,6 +1919,32 @@ export function TimetablePage() {
           {/* Visibility toggles */}
           {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Teacher", "👤")}
           {TBtn(showRoom,    () => setShowRoom(!showRoom),       "Room",    "🚪")}
+
+          <div style={{ width:1, height:20, background:"#E8E4FF" }} />
+
+          {/* Undo / Redo */}
+          <div style={{ display:"flex", border:"1px solid #E8E4FF", borderRadius:7, overflow:"hidden" }}>
+            <button onClick={() => {
+              if (!classTTHistory.length) return
+              const prev = classTTHistory[classTTHistory.length - 1]
+              setClassTTFuture(f => [classTT, ...f.slice(0,49)])
+              setClassTTHistory(classTTHistory.slice(0,-1))
+              setClassTT(prev)
+              const ntt = { ...teacherTT }; rebuildTeacherTT(prev, ntt, config.workDays); setTeacherTT(ntt)
+            }} disabled={!classTTHistory.length}
+              title="Undo (Ctrl+Z)"
+              style={{ padding:"5px 10px", border:"none", background: classTTHistory.length?"#fff":"#FAFAFE", color:classTTHistory.length?"#4B5275":"#C4C0D8", fontSize:11, cursor:classTTHistory.length?"pointer":"not-allowed" }}>↩ Undo</button>
+            <button onClick={() => {
+              if (!classTTFuture.length) return
+              const next = classTTFuture[0]
+              setClassTTHistory(h => [...h.slice(-49), classTT])
+              setClassTTFuture(classTTFuture.slice(1))
+              setClassTT(next)
+              const ntt = { ...teacherTT }; rebuildTeacherTT(next, ntt, config.workDays); setTeacherTT(ntt)
+            }} disabled={!classTTFuture.length}
+              title="Redo (Ctrl+Y)"
+              style={{ padding:"5px 10px", border:"none", background: classTTFuture.length?"#fff":"#FAFAFE", color:classTTFuture.length?"#4B5275":"#C4C0D8", fontSize:11, cursor:classTTFuture.length?"pointer":"not-allowed", borderLeft:"1px solid #E8E4FF" }}>↪ Redo</button>
+          </div>
 
           <div style={{ width:1, height:20, background:"#E8E4FF" }} />
 
