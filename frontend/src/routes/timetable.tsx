@@ -420,10 +420,13 @@ export function TimetablePage() {
     )
   )
 
-  // ── Period Pool: subject deficits per section ────────────
-  // For each section × subject: how many periods are still needed?
+  // ── Period Pool: subject deficits — view-mode-aware ──────
+  // Teacher view + specific teacher → only that teacher's sections.
+  // Class view + specific class     → only that class.
+  // All other modes                 → all sections.
   const poolData = useMemo(() => {
-    return sections.map(sec => {
+    // Helper: compute subject stats for one section
+    const sectionStats = (sec: typeof sections[0]) => {
       const sectionSubjects = subjects.filter(sub => {
         const secs = (sub as any).sections ?? []
         return secs.length === 0 || secs.includes(sec.name)
@@ -434,11 +437,42 @@ export function TimetablePage() {
         const scheduled = config.workDays.reduce((total, day) =>
           total + classPeriods.filter(p => classTT[sec.name]?.[day]?.[p.id]?.subject === sub.name).length, 0)
         const deficit = Math.max(0, target - scheduled)
-        return { name: sub.name, target, scheduled, deficit }
-      }).filter((s): s is {name:string; target:number; scheduled:number; deficit:number} => s !== null && s.deficit > 0)
-      return { section: sec.name, subjects: subjectStats }
-    }).filter(s => s.subjects.length > 0)
-  }, [sections, subjects, classTT, config.workDays, classPeriods])
+        return deficit > 0 ? { name: sub.name, target, scheduled, deficit } : null
+      }).filter((s): s is {name:string; target:number; scheduled:number; deficit:number} => s !== null)
+      return subjectStats
+    }
+
+    // ── Teacher mode: filter to teacher's assigned sections ──
+    if (viewMode === 'teacher' && selectedEntity !== 'ALL') {
+      // Primary source: teacherTT.classes tells us which sections this teacher covers
+      const tData = teacherTT[selectedEntity]
+      const teacherSectionNames: Set<string> = new Set(tData?.classes ?? [])
+      // Fallback: scan classTT for any cell belonging to this teacher
+      if (teacherSectionNames.size === 0) {
+        sections.forEach(sec => {
+          config.workDays.forEach(day => {
+            classPeriods.forEach(p => {
+              if (classTT[sec.name]?.[day]?.[p.id]?.teacher === selectedEntity)
+                teacherSectionNames.add(sec.name)
+            })
+          })
+        })
+      }
+      return sections
+        .filter(sec => teacherSectionNames.has(sec.name))
+        .map(sec => ({ section: sec.name, subjects: sectionStats(sec) }))
+        .filter(s => s.subjects.length > 0)
+    }
+
+    // ── Class mode: filter to selected class ──
+    const filteredSections = (viewMode === 'class' && selectedEntity !== 'ALL')
+      ? sections.filter(s => s.name === selectedEntity)
+      : sections
+
+    return filteredSections
+      .map(sec => ({ section: sec.name, subjects: sectionStats(sec) }))
+      .filter(s => s.subjects.length > 0)
+  }, [sections, subjects, classTT, config.workDays, classPeriods, viewMode, selectedEntity, teacherTT])
 
   const poolTotalDeficit = poolData.reduce((t, s) => t + s.subjects.reduce((ts, ss) => ts + ss.deficit, 0), 0)
 
@@ -1325,13 +1359,15 @@ export function TimetablePage() {
           </div>
         ) : poolData.map(sec => (
           <div key={sec.section}>
-            {/* Section header */}
-            <div style={{ padding:"6px 14px", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <span style={{ fontSize:11, fontWeight:700, color:"#4338ca" }}>{sec.section}</span>
-              <span style={{ fontSize:9, color:"#7C6FE0", padding:"1px 6px", background:"#EDE9FF", borderRadius:8, fontWeight:600 }}>
-                {sec.subjects.reduce((t,s) => t+s.deficit, 0)} needed
-              </span>
-            </div>
+            {/* Section header — hidden in teacher view (section name embedded in chip label) */}
+            {!(viewMode === 'teacher' && selectedEntity !== 'ALL') && (
+              <div style={{ padding:"6px 14px", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:"#4338ca" }}>{sec.section}</span>
+                <span style={{ fontSize:9, color:"#7C6FE0", padding:"1px 6px", background:"#EDE9FF", borderRadius:8, fontWeight:600 }}>
+                  {sec.subjects.reduce((t,s) => t+s.deficit, 0)} needed
+                </span>
+              </div>
+            )}
             {/* Subject chips */}
             <div style={{ padding:"8px 10px 10px", display:"flex", flexWrap:"wrap" as const, gap:5 }}>
               {sec.subjects.map(sub => (
@@ -1345,9 +1381,14 @@ export function TimetablePage() {
                   }}
                   onDragEnd={() => setPoolDragItem(null)}
                   title={`${sub.scheduled}/${sub.target} scheduled — drag onto an empty cell`}
-                  style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 8px", borderRadius:6, background:"#EDE9FF", border:"1.5px solid #D8D2FF", fontSize:10, fontWeight:600, color:"#4338ca", cursor:"grab", userSelect:"none" as const, transition:"box-shadow 0.1s" }}>
-                  <span>{sub.name}</span>
-                  <span style={{ padding:"1px 5px", borderRadius:4, background:"#7C6FE0", color:"#fff", fontSize:9, fontWeight:700 }}>
+                  className={getSubjectColor(sub.name)}
+                  style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 9px", borderRadius:6, fontSize:10, fontWeight:600, cursor:"grab", userSelect:"none" as const, boxShadow:"0 1px 3px rgba(0,0,0,0.08)", transition:"box-shadow 0.1s" }}>
+                  <span>
+                    {(viewMode === 'teacher' && selectedEntity !== 'ALL')
+                      ? `${sec.section} · ${sub.name}`
+                      : sub.name}
+                  </span>
+                  <span style={{ padding:"1px 5px", borderRadius:4, background:"rgba(0,0,0,0.15)", fontSize:9, fontWeight:700 }}>
                     -{sub.deficit}
                   </span>
                 </div>
