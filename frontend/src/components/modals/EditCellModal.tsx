@@ -7,6 +7,8 @@ import { detectConflicts } from "@/lib/schedulingEngine"
 interface Props {
   target: { section: string; day: string; periodId: string }
   onClose: () => void
+  /** Pre-selected subject (from period pool drag-and-drop) */
+  initialSubject?: string
 }
 
 const DAY_LABEL: Record<string, string> = {
@@ -26,7 +28,7 @@ const SUBJECT_COLORS = [
   { bg: "#ecfeff", border: "#67e8f9", text: "#164e63" },  // cyan
 ]
 
-export function EditCellModal({ target, onClose }: Props) {
+export function EditCellModal({ target, onClose, initialSubject }: Props) {
   const {
     config, classTT, staff, subjects, sections, periods, facilities,
     updateCell, setTeacherTT, setConflicts,
@@ -37,9 +39,10 @@ export function EditCellModal({ target, onClose }: Props) {
   const section    = sections.find(s => s.name === target.section)
   const periodObj  = periods.find(p => p.id === target.periodId)
 
-  const [selectedSubject, setSelectedSubject] = useState(cell.subject ?? "")
-  const [selectedTeacher, setSelectedTeacher] = useState(cell.teacher ?? "")
-  const [selectedRoom,    setSelectedRoom]    = useState(cell.room    ?? "")
+  // When dragged from the Period Pool, `initialSubject` pre-selects the subject.
+  const [selectedSubject, setSelectedSubject] = useState(cell.subject || initialSubject || "")
+  const [selectedTeacher, setSelectedTeacher] = useState(cell.teacher || "")
+  const [selectedRoom,    setSelectedRoom]    = useState(cell.room    || "")
 
   // ── Subjects that apply to this section ────────────────────────
   const sectionSubjects = useMemo(() =>

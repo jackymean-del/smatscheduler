@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useTimetableStore } from "@/store/timetableStore"
 import { EditCellModal } from "@/components/modals/EditCellModal"
 import { CalendarView } from "@/components/CalendarView"
@@ -371,6 +371,11 @@ export function TimetablePage() {
   const [dragOverCell, setDragOverCell] = useState<string|null>(null) // key = "sec|day|pid"
   const [publishConfirm, setPublishConfirm] = useState(false)
 
+  // ── Period Pool panel state ──────────────────────────────
+  const [poolPanelOpen, setPoolPanelOpen] = useState(false)
+  const [poolDragItem, setPoolDragItem] = useState<{section:string; subject:string} | null>(null)
+  const [poolSuggestSubject, setPoolSuggestSubject] = useState("")
+
   // ── Substitution panel state ─────────────────────────────
   const [subPanelOpen, setSubPanelOpen] = useState(false)
   const [subAbsentTeacher, setSubAbsentTeacher] = useState("")
@@ -415,6 +420,28 @@ export function TimetablePage() {
     )
   )
 
+  // ── Period Pool: subject deficits per section ────────────
+  // For each section × subject: how many periods are still needed?
+  const poolData = useMemo(() => {
+    return sections.map(sec => {
+      const sectionSubjects = subjects.filter(sub => {
+        const secs = (sub as any).sections ?? []
+        return secs.length === 0 || secs.includes(sec.name)
+      })
+      const subjectStats = sectionSubjects.map(sub => {
+        const target = (sub as any).periodsPerWeek ?? 0
+        if (!target) return null
+        const scheduled = config.workDays.reduce((total, day) =>
+          total + classPeriods.filter(p => classTT[sec.name]?.[day]?.[p.id]?.subject === sub.name).length, 0)
+        const deficit = Math.max(0, target - scheduled)
+        return { name: sub.name, target, scheduled, deficit }
+      }).filter((s): s is {name:string; target:number; scheduled:number; deficit:number} => s !== null && s.deficit > 0)
+      return { section: sec.name, subjects: subjectStats }
+    }).filter(s => s.subjects.length > 0)
+  }, [sections, subjects, classTT, config.workDays, classPeriods])
+
+  const poolTotalDeficit = poolData.reduce((t, s) => t + s.subjects.reduce((ts, ss) => ts + ss.deficit, 0), 0)
+
   const handleShift = (idx: number, dir: -1|1) => {
     const np = shiftPeriod(periods, classTT, idx, dir)
     setPeriods(np)
@@ -431,6 +458,13 @@ export function TimetablePage() {
   const handleDrop = (e: React.DragEvent, section:string, day:string, periodId:string) => {
     e.preventDefault()
     setDragOverCell(null)
+    // Pool drag takes priority
+    if (poolDragItem) {
+      setPoolSuggestSubject(poolDragItem.subject)
+      setEditTarget({ section, day, periodId })
+      setPoolDragItem(null)
+      return
+    }
     if (!dragItem) return
     setDragItem(null)
     setEditTarget({ section, day, periodId })
@@ -1198,6 +1232,10 @@ export function TimetablePage() {
         onCellClick={(section, day, periodId) => {
           if (editMode) setEditTarget({ section, day, periodId })
         }}
+        onCellFill={(section, day, periodId, suggestedSubject) => {
+          setPoolSuggestSubject(suggestedSubject)
+          setEditTarget({ section, day, periodId })
+        }}
         onCellSwap={(from, to) => {
           // Get the two cells
           const fromCell = classTT[from.section]?.[from.day]?.[from.periodId]
@@ -1256,6 +1294,76 @@ export function TimetablePage() {
       </div>
     )
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // RENDER: Period Pool right-sidebar panel
+  // ═══════════════════════════════════════════════════════════
+  const renderPoolPanel = () => (
+    <div style={{ width:268, background:"#fff", borderLeft:"1px solid #E8E4FF", display:"flex", flexDirection:"column" as const, flexShrink:0, overflow:"hidden" }}>
+      {/* Header */}
+      <div style={{ padding:"12px 16px", background:"#EDE9FF", borderBottom:"1px solid #D8D2FF", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:700, color:"#4338ca" }}>📦 Period Pool</div>
+          <div style={{ fontSize:10, color:"#6D64C0", marginTop:1 }}>
+            {poolTotalDeficit > 0 ? `${poolTotalDeficit} unscheduled period${poolTotalDeficit!==1?"s":""}` : "All periods scheduled ✅"}
+          </div>
+        </div>
+        <button onClick={() => setPoolPanelOpen(false)} style={{ border:"none", background:"none", fontSize:16, cursor:"pointer", color:"#6D64C0", lineHeight:1 }}>✕</button>
+      </div>
+
+      {/* Hint */}
+      <div style={{ padding:"7px 12px", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF", fontSize:10, color:"#7C6FE0", lineHeight:1.4 }}>
+        Drag a chip onto any empty cell · Edit modal opens pre-filled
+      </div>
+
+      {/* Body — scrollable list */}
+      <div style={{ flex:1, overflowY:"auto" as const }}>
+        {poolTotalDeficit === 0 ? (
+          <div style={{ padding:"32px 16px", textAlign:"center" as const, color:"#8B87AD", fontSize:13 }}>
+            <div style={{ fontSize:32, marginBottom:8 }}>🎉</div>
+            Every subject has its target periods scheduled!
+          </div>
+        ) : poolData.map(sec => (
+          <div key={sec.section}>
+            {/* Section header */}
+            <div style={{ padding:"6px 14px", background:"#F5F2FF", borderBottom:"1px solid #E8E4FF", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:11, fontWeight:700, color:"#4338ca" }}>{sec.section}</span>
+              <span style={{ fontSize:9, color:"#7C6FE0", padding:"1px 6px", background:"#EDE9FF", borderRadius:8, fontWeight:600 }}>
+                {sec.subjects.reduce((t,s) => t+s.deficit, 0)} needed
+              </span>
+            </div>
+            {/* Subject chips */}
+            <div style={{ padding:"8px 10px 10px", display:"flex", flexWrap:"wrap" as const, gap:5 }}>
+              {sec.subjects.map(sub => (
+                <div key={sub.name}
+                  draggable
+                  onDragStart={e => {
+                    setPoolDragItem({ section: sec.section, subject: sub.name })
+                    e.dataTransfer.setData('application/pool-subject', sub.name)
+                    e.dataTransfer.setData('application/pool-section', sec.section)
+                    e.dataTransfer.effectAllowed = "copy"
+                  }}
+                  onDragEnd={() => setPoolDragItem(null)}
+                  title={`${sub.scheduled}/${sub.target} scheduled — drag onto an empty cell`}
+                  style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 8px", borderRadius:6, background:"#EDE9FF", border:"1.5px solid #D8D2FF", fontSize:10, fontWeight:600, color:"#4338ca", cursor:"grab", userSelect:"none" as const, transition:"box-shadow 0.1s" }}>
+                  <span>{sub.name}</span>
+                  <span style={{ padding:"1px 5px", borderRadius:4, background:"#7C6FE0", color:"#fff", fontSize:9, fontWeight:700 }}>
+                    -{sub.deficit}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer legend */}
+      <div style={{ padding:"8px 12px", borderTop:"1px solid #E8E4FF", background:"#FAFAFE", fontSize:9, color:"#8B87AD", lineHeight:1.5 }}>
+        <div><span style={{ fontWeight:600 }}>-N</span> badge = periods still needed</div>
+        <div>Only subjects with a target (periodsPerWeek) show here</div>
+      </div>
+    </div>
+  )
 
   // ═══════════════════════════════════════════════════════════
   // RENDER: Uncovered Periods Pool
@@ -1462,6 +1570,10 @@ export function TimetablePage() {
           <button onClick={() => setSubPanelOpen(o => !o)}
             style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 12px", borderRadius:6, border:`1px solid ${subPanelOpen?"#f59e0b":"#fbbf24"}`, background:subPanelOpen?"#fff7ed":"#fffbeb", color:"#92400e", fontSize:11, fontWeight:600, cursor:"pointer" }}>
             🔄 Substitution{activeSubCount > 0 ? ` (${activeSubCount})` : ""}
+          </button>
+          <button onClick={() => setPoolPanelOpen(o => !o)}
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 12px", borderRadius:6, border:`1px solid ${poolPanelOpen?"#7C6FE0":"#D8D2FF"}`, background:poolPanelOpen?"#EDE9FF":"#fff", color:poolPanelOpen?"#4338ca":"#6D64C0", fontSize:11, fontWeight:600, cursor:"pointer" }}>
+            📦 Pool{poolTotalDeficit > 0 ? ` (${poolTotalDeficit})` : ""}
           </button>
 
           <div style={{ flex:1 }} />
@@ -1689,7 +1801,16 @@ export function TimetablePage() {
         </div>
       )}
 
-      {editTarget && <EditCellModal target={editTarget} onClose={() => setEditTarget(null)} />}
+      {/* ── Period Pool Panel ────────────────────────────── */}
+      {poolPanelOpen && renderPoolPanel()}
+
+      {editTarget && (
+        <EditCellModal
+          target={editTarget}
+          initialSubject={poolSuggestSubject || undefined}
+          onClose={() => { setEditTarget(null); setPoolSuggestSubject("") }}
+        />
+      )}
 
       {/* ── Publish confirmation overlay ── */}
       {publishConfirm && (

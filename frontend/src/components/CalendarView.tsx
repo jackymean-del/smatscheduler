@@ -39,6 +39,8 @@ export interface CalendarViewProps {
   showRoom: boolean
   onCellClick?: (section: string, day: string, periodId: string) => void
   onCellSwap?: (from: {section:string, day:string, periodId:string}, to: {section:string, day:string, periodId:string}) => void
+  /** Called when a period-pool chip is dropped onto an empty cell. */
+  onCellFill?: (section: string, day: string, periodId: string, suggestedSubject: string) => void
   absentHighlights?: Array<{ teacher: string; day: string }>
   /** Optional: solver-emitted reasons for empty cells.
    *  When present, empty cells get a clickable ? icon → reasons popover. */
@@ -285,7 +287,7 @@ export function CalendarView({
   staff, sections, subjects, substitutions,
   viewMode, selectedEntity,
   showTeacher, showRoom,
-  onCellClick, onCellSwap, absentHighlights, blockedSlots,
+  onCellClick, onCellSwap, onCellFill, absentHighlights, blockedSlots,
   dynamicLearningGroups, rooms,
 }: CalendarViewProps) {
 
@@ -539,7 +541,17 @@ export function CalendarView({
                           onDragStart={cell?.subject ? () => setDragFrom({section: sec.name, day: dayKey, periodId: p.id}) : undefined}
                           onDragOver={e => { e.preventDefault(); setDragOverCell(cellDragKey) }}
                           onDragLeave={() => setDragOverCell(null)}
-                          onDrop={() => { setDragOverCell(null); if (dragFrom) { onCellSwap?.(dragFrom, {section: sec.name, day: dayKey, periodId: p.id}); setDragFrom(null) } }}
+                          onDrop={e => {
+                            setDragOverCell(null)
+                            const poolSubject = e.dataTransfer.getData('application/pool-subject')
+                            if (poolSubject && !cell?.subject) {
+                              onCellFill?.(sec.name, dayKey, p.id, poolSubject)
+                              setDragFrom(null)
+                            } else if (dragFrom) {
+                              onCellSwap?.(dragFrom, {section: sec.name, day: dayKey, periodId: p.id})
+                              setDragFrom(null)
+                            }
+                          }}
                           style={{ border: isDragOver ? "2px dashed #7C6FE0" : "1px solid #E8E4FF", padding: 3, verticalAlign: "top" as const, background: teacherAbsent ? "#FFFBEB" : isDragOver ? "#EDE9FF" : undefined, position: "relative" as const, cursor: cell?.subject ? "grab" : "default" }}>
                           {/* DLG icon overlay — top-right when cell is part of a DLG */}
                           {cell?.subject && (() => {
@@ -554,10 +566,8 @@ export function CalendarView({
                             ? (() => {
                                 const reasons = blockedMap.get(`${sec.name}|${dayKey}|${p.id}`)
                                 return (
-                                  <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: "#D8D2FF", fontSize: 11 }}>
-                                    {reasons && reasons.length > 0
-                                      ? <BlockedSlotIcon reasons={reasons} />
-                                      : '—'}
+                                  <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: isDragOver ? "#7C6FE0" : "#D8D2FF", fontSize: isDragOver ? 10 : 11 }}>
+                                    {isDragOver ? "Drop here" : reasons && reasons.length > 0 ? <BlockedSlotIcon reasons={reasons} /> : '—'}
                                   </div>
                                 )
                               })()
@@ -702,7 +712,17 @@ export function CalendarView({
                           onDragStart={cell?.subject ? () => setDragFrom({section: sec.name, day: dayKey, periodId: p.id}) : undefined}
                           onDragOver={e => { e.preventDefault(); setDragOverCell(cellDragKey) }}
                           onDragLeave={() => setDragOverCell(null)}
-                          onDrop={() => { setDragOverCell(null); if (dragFrom) { onCellSwap?.(dragFrom, {section: sec.name, day: dayKey, periodId: p.id}); setDragFrom(null) } }}
+                          onDrop={e => {
+                            setDragOverCell(null)
+                            const poolSubject = e.dataTransfer.getData('application/pool-subject')
+                            if (poolSubject && !cell?.subject) {
+                              onCellFill?.(sec.name, dayKey, p.id, poolSubject)
+                              setDragFrom(null)
+                            } else if (dragFrom) {
+                              onCellSwap?.(dragFrom, {section: sec.name, day: dayKey, periodId: p.id})
+                              setDragFrom(null)
+                            }
+                          }}
                           style={{ border: isDragOver ? "2px dashed #7C6FE0" : "1px solid #E8E4FF", padding: 3, verticalAlign: "top" as const, background: teacherAbsent ? "#FFFBEB" : isDragOver ? "#EDE9FF" : undefined, position: "relative" as const, cursor: cell?.subject ? "grab" : "default" }}>
                           {/* DLG icon overlay — top-right when cell is part of a DLG */}
                           {cell?.subject && (() => {
@@ -717,10 +737,8 @@ export function CalendarView({
                             ? (() => {
                                 const reasons = blockedMap.get(`${sec.name}|${dayKey}|${p.id}`)
                                 return (
-                                  <div style={{ minHeight: 36, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: "#D8D2FF", fontSize: 11 }}>
-                                    {reasons && reasons.length > 0
-                                      ? <BlockedSlotIcon reasons={reasons} />
-                                      : '—'}
+                                  <div style={{ minHeight: 36, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: isDragOver ? "#7C6FE0" : "#D8D2FF", fontSize: isDragOver ? 10 : 11 }}>
+                                    {isDragOver ? "Drop here" : reasons && reasons.length > 0 ? <BlockedSlotIcon reasons={reasons} /> : '—'}
                                   </div>
                                 )
                               })()
