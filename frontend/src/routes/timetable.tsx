@@ -701,7 +701,9 @@ export function TimetablePage() {
     setDragItem(item)
     e.dataTransfer.effectAllowed = "copy"
   }
-  const handleDrop = (e: React.DragEvent, section:string, day:string, periodId:string) => {
+  // forcedTeacher: when dropping in teacher-view, always assign to the viewed teacher
+  // rather than letting pickBestTeacher pick a different (lower-workload) teacher.
+  const handleDrop = (e: React.DragEvent, section:string, day:string, periodId:string, forcedTeacher?: string) => {
     e.preventDefault()
     setDragOverCell(null)
     // Pool drag takes priority — save directly without opening modal
@@ -711,19 +713,23 @@ export function TimetablePage() {
         setPoolDragItem(null)
         return
       }
-      // Allow replacing occupied cells — but only if the new teacher has no clash
-      const teacher = pickBestTeacher(section, poolDragItem.subject, day, periodId)
-      const teacherConflict = teacher && sections.some(s =>
+      // In teacher view forcedTeacher is the viewed teacher; otherwise pick best available
+      const teacher = forcedTeacher || pickBestTeacher(section, poolDragItem.subject, day, periodId)
+      // Reject if the chosen teacher is already teaching another section at this slot
+      const teacherConflict = !!teacher && sections.some(s =>
         s.name !== section && classTT[s.name]?.[day]?.[periodId]?.teacher === teacher
       )
-      if (!teacherConflict) {
-        const room = pickHomeRoom(section)
-        const newTT = { ...classTT }
-        newTT[section] = { ...newTT[section] }
-        newTT[section][day] = { ...(newTT[section][day] ?? {}) }
-        newTT[section][day][periodId] = { subject: poolDragItem.subject, teacher, room }
-        commitTT(newTT)
+      if (teacherConflict) {
+        alert(`Cannot assign: ${teacher} is already teaching another class at this period.`)
+        setPoolDragItem(null)
+        return
       }
+      const room = pickHomeRoom(section)
+      const newTT = { ...classTT }
+      newTT[section] = { ...newTT[section] }
+      newTT[section][day] = { ...(newTT[section][day] ?? {}) }
+      newTT[section][day][periodId] = { subject: poolDragItem.subject, teacher: teacher || null, room }
+      commitTT(newTT)
       setPoolDragItem(null)
       return
     }
@@ -1078,7 +1084,7 @@ export function TimetablePage() {
                     const ttIsTarget = isDragging && !!ttSecName && (poolDragItem?.section === ttSecName || dragItem?.section === ttSecName)
                     const ttDragProps = ttSecName ? {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttCellKey) },
-                      onDrop:     (e: React.DragEvent) => handleDrop(e, ttSecName, day, p.id),
+                      onDrop:     (e: React.DragEvent) => handleDrop(e, ttSecName, day, p.id, tn),
                       onDragLeave: () => setDragOverCell(null),
                     } : {}
                     if (!cell?.subject) {
@@ -1218,7 +1224,7 @@ export function TimetablePage() {
                       const ttTIsTarget = isDragging && !!ttTSecName && (poolDragItem?.section === ttTSecName || dragItem?.section === ttTSecName)
                       const ttTDragProps = ttTSecName ? {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttTKey) },
-                        onDrop:     (e: React.DragEvent) => handleDrop(e, ttTSecName, day, p.id),
+                        onDrop:     (e: React.DragEvent) => handleDrop(e, ttTSecName, day, p.id, tn),
                         onDragLeave: () => setDragOverCell(null),
                       } : {}
                       if (!cell?.subject) {
