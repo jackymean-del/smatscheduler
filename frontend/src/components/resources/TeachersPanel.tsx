@@ -598,13 +598,15 @@ function TeacherRow({ t, subjects, classOpts, classTeacherOpts, coClassTeacherOp
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export function TeachersPanel({ staff, setStaff, sections, subjects, onScopeClick, onAIFix }: {
+export function TeachersPanel({ staff, setStaff, sections, subjects, onScopeClick, onAIFix, aiLoading, aiApplied }: {
   staff: Staff[]
   setStaff: (s: Staff[]) => void
   sections: Section[]
   subjects: Subject[]
   onScopeClick?: (t: Staff, rect: DOMRect) => void
   onAIFix?: () => void
+  aiLoading?: boolean
+  aiApplied?: boolean
 }) {
   const [search, setSearch]         = useState('')
   const [importOpen, setImportOpen] = useState(false)
@@ -734,20 +736,30 @@ export function TeachersPanel({ staff, setStaff, sections, subjects, onScopeClic
           >⬆ Import</button>
           {onAIFix && (
             <button
-              onClick={onAIFix}
+              onClick={aiLoading ? undefined : onAIFix}
+              disabled={aiLoading}
               title="AI-assign subjects, classes and workloads to all educators"
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
-                background: P, color: '#fff', border: 'none', borderRadius: 7,
+                background: aiApplied ? '#16a34a' : aiLoading ? '#9b8fef' : P,
+                color: '#fff', border: 'none', borderRadius: 7,
                 padding: '6px 14px', fontSize: 11.5, fontWeight: 700,
-                cursor: 'pointer', fontFamily: 'inherit',
+                cursor: aiLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
                 boxShadow: '0 2px 6px rgba(124,111,224,0.28)',
                 whiteSpace: 'nowrap', height: 34, boxSizing: 'border-box' as const,
+                opacity: aiLoading ? 0.85 : 1,
+                transition: 'background 0.2s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = P_D)}
-              onMouseLeave={e => (e.currentTarget.style.background = P)}
-            >⚡ AI Fix</button>
+            >
+              {aiLoading
+                ? <><span style={{ display:'inline-block', width:10, height:10, border:'2px solid rgba(255,255,255,0.4)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.7s linear infinite' }} />Applying…</>
+                : aiApplied
+                  ? <>✓ Applied</>
+                  : <>⚡ AI Fix</>
+              }
+            </button>
           )}
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       </div>
 

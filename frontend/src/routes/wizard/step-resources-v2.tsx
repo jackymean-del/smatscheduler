@@ -176,9 +176,11 @@ export function StepResourcesV2() {
   const [generating, setGenerating] = useState(false)
 
   // ── Global AI assign state ────────────────────────────────────────────────
-  const [aiLoading,   setAiLoading]   = useState(false)
-  const [aiStatus,    setAiStatus]    = useState('')
-  const [aiSnapshot,  setAiSnapshot]  = useState<AISnapshot | null>(null)
+  const [aiLoading,         setAiLoading]         = useState(false)
+  const [aiStatus,          setAiStatus]          = useState('')
+  const [aiSnapshot,        setAiSnapshot]        = useState<AISnapshot | null>(null)
+  const [facultyAiApplied,  setFacultyAiApplied]  = useState(false)
+  const [roomsAiApplied,    setRoomsAiApplied]    = useState(false)
   const aiAbortRef = useRef(false)
 
   function sleep(ms: number) { return new Promise<void>(r => setTimeout(r, ms)) }
@@ -230,6 +232,7 @@ export function StepResourcesV2() {
   async function handleFacultyAIAssign() {
     if (aiLoading) return
     setAiLoading(true)
+    setFacultyAiApplied(false)
     setAiSnapshot({ subjects, sections, staff, rooms })
     const board = normalizeBoardType(config.board ?? 'CBSE') as CurriculumBoard
     const boardPeriods: Record<string, number> = { CBSE: 32, ICSE: 32, IB: 24, Cambridge: 24, Custom: 28 }
@@ -242,19 +245,22 @@ export function StepResourcesV2() {
     setStaff(newStaff)
     setAiStatus('✓ Faculty assignments updated')
     setAiLoading(false)
-    setTimeout(() => setAiStatus(''), 3000)
+    setFacultyAiApplied(true)
+    setTimeout(() => { setAiStatus(''); setFacultyAiApplied(false) }, 3500)
   }
 
   async function handleRoomsAIAssign() {
     if (aiLoading) return
     setAiLoading(true)
+    setRoomsAiApplied(false)
     setAiSnapshot({ subjects, sections, staff, rooms })
     setAiStatus('Inferring room types & subject mappings from room names…')
     await sleep(480)
     handleRoomAIFix()   // name-pattern logic: Computer Lab, Sci Lab, Library, Gym…
     setAiStatus('✓ Room assignments updated')
     setAiLoading(false)
-    setTimeout(() => setAiStatus(''), 3000)
+    setRoomsAiApplied(true)
+    setTimeout(() => { setAiStatus(''); setRoomsAiApplied(false) }, 3500)
   }
 
   function handleGlobalAIUndo() {
@@ -625,6 +631,8 @@ export function StepResourcesV2() {
                       : { kind: 'Teacher', entity: t, rect })
                   }
                   onAIFix={handleFacultyAIAssign}
+                  aiLoading={aiLoading && activeTab === 'teachers'}
+                  aiApplied={facultyAiApplied}
                 />
               </div>
               <div style={{ flex: 1, minHeight: 0, display: activeTab === 'rooms' ? 'flex' : 'none', flexDirection: 'column' }}>
@@ -637,6 +645,8 @@ export function StepResourcesV2() {
                       : { kind: 'Room', entity: r, rect })
                   }
                   onAIFix={handleRoomsAIAssign}
+                  aiLoading={aiLoading && activeTab === 'rooms'}
+                  aiApplied={roomsAiApplied}
                 />
               </div>
             </div>

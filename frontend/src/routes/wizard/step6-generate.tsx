@@ -122,6 +122,11 @@ export function Step6Generate() {
   const [job, setJob] = useState<Job | null>(null)
   const [solverOutput, setSolverOutput] = useState<ReturnType<typeof solveTimetable> | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Whether to show the "already generated" banner (user came back after closing)
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false)
+
+  // Detect existing timetable in the store (persisted across sessions)
+  const hasExistingTT = Object.keys(store.classTT ?? {}).length > 0
 
   // Timetable identity — pre-filled with sensible defaults
   const [ttName, setTtName]         = useState(config.timetableName       || `${config.schoolName || "School"} Timetable`)
@@ -277,7 +282,8 @@ export function Step6Generate() {
       {/* ── Title ── */}
       <div style={{ animation:"fade-up 0.4s ease" }}>
         <h2 style={{ fontFamily:"'DM Serif Display',Georgia,serif", fontSize:28, margin:"0 0 4px" }}>
-          {!job                       ? `Ready to generate your ${T.schedule.toLowerCase()}` :
+          {!job && hasExistingTT && !showRegenConfirm ? `Your ${T.schedule.toLowerCase()} is saved ✓` :
+           !job                       ? `Ready to generate your ${T.schedule.toLowerCase()}` :
            job.status === "running"   ? `Building your ${T.schedule.toLowerCase()}…` :
            job.status === "completed" ? `${T.schedule} is ready! 🎉` :
            "Something went wrong"}
@@ -374,9 +380,40 @@ export function Step6Generate() {
         ))}
       </div>
 
-      {/* ── Timetable identity form (shown before generate) ── */}
-      {!job && (
+      {/* ── Already-generated banner (persisted across sessions) ── */}
+      {!job && hasExistingTT && !showRegenConfirm && (
+        <div style={{ width:"100%", maxWidth:500, background:"#f0fdf4", borderRadius:14, border:"1.5px solid #86efac", padding:"22px 26px", animation:"fade-up 0.4s ease 0.2s both", textAlign:"center" as const }}>
+          <div style={{ fontSize:28, marginBottom:6 }}>✅</div>
+          <div style={{ fontSize:15, fontWeight:700, color:"#15803d", marginBottom:4 }}>
+            {T.schedule} already generated
+          </div>
+          <div style={{ fontSize:12, color:"#4B5275", marginBottom:18 }}>
+            {config.timetableName && <><strong>{config.timetableName}</strong> · </>}
+            {Object.keys(store.classTT ?? {}).length} classes · {store.timetableStatus === 'published' ? '🟢 Published' : '🟡 Draft'}
+          </div>
+          <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" as const }}>
+            <button
+              onClick={() => window.location.href='/timetable'}
+              style={{ padding:"11px 28px", borderRadius:10, border:"none", background:"#7C6FE0", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", boxShadow:"0 4px 16px rgba(124,111,224,0.3)" }}>
+              View {T.schedule} →
+            </button>
+            <button
+              onClick={() => setShowRegenConfirm(true)}
+              style={{ padding:"11px 20px", borderRadius:10, border:"1.5px solid #E8E4FF", background:"#fff", fontSize:13, color:"#4B5275", cursor:"pointer" }}>
+              ↺ Regenerate
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Timetable identity form (shown before first generate or on regen) ── */}
+      {!job && (!hasExistingTT || showRegenConfirm) && (
         <div style={{ width:"100%", maxWidth:460, background:"#FAFAFE", borderRadius:12, border:"1px solid #E8E4FF", padding:"20px 24px", animation:"fade-up 0.4s ease 0.25s both", textAlign:"left" as const }}>
+          {showRegenConfirm && (
+            <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:12, color:"#92400e" }}>
+              ⚠️ This will <strong>replace</strong> your existing timetable. Make sure you've reviewed the draft first.
+            </div>
+          )}
           <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase" as const, letterSpacing:"0.08em", color:"#8B87AD", marginBottom:14 }}>📋 Timetable Details</div>
           <div style={{ display:"flex", flexDirection:"column" as const, gap:12 }}>
 
@@ -441,16 +478,22 @@ export function Step6Generate() {
 
       {/* ── CTA buttons ── */}
       <div style={{ display:"flex", gap:10, flexWrap:"wrap" as const, justifyContent:"center", animation:"fade-up 0.4s ease 0.35s both" }}>
-        {!job && (
+        {!job && (!hasExistingTT || showRegenConfirm) && (
           <>
             <button onClick={startGenerate}
               style={{ display:"flex", alignItems:"center", gap:8, padding:"13px 36px", borderRadius:10, border:"none", background:"#7C6FE0", color:"#fff", fontSize:15, fontWeight:700, cursor:"pointer", boxShadow:"0 4px 20px rgba(79,70,229,0.35)" }}>
-              ✨ Generate {T.schedule}
+              {showRegenConfirm ? "↺ Regenerate" : `✨ Generate ${T.schedule}`}
             </button>
-            <button onClick={() => setStep(4)}
-              style={{ padding:"13px 20px", borderRadius:10, border:"1px solid #E8E4FF", background:"#fff", fontSize:13, color:"#4B5275", cursor:"pointer" }}>
-              ← Student Groups
-            </button>
+            {showRegenConfirm
+              ? <button onClick={() => setShowRegenConfirm(false)}
+                  style={{ padding:"13px 20px", borderRadius:10, border:"1px solid #E8E4FF", background:"#fff", fontSize:13, color:"#4B5275", cursor:"pointer" }}>
+                  Cancel
+                </button>
+              : <button onClick={() => setStep(4)}
+                  style={{ padding:"13px 20px", borderRadius:10, border:"1px solid #E8E4FF", background:"#fff", fontSize:13, color:"#4B5275", cursor:"pointer" }}>
+                  ← Student Groups
+                </button>
+            }
           </>
         )}
 
@@ -460,7 +503,7 @@ export function Step6Generate() {
               style={{ padding:"13px 32px", borderRadius:10, border:"none", background:"#7C6FE0", color:"#fff", fontSize:15, fontWeight:700, cursor:"pointer", boxShadow:"0 4px 20px rgba(124,111,224,0.3)" }}>
               View {T.schedule} (Draft) →
             </button>
-            <button onClick={() => setJob(null)}
+            <button onClick={() => { setJob(null); setShowRegenConfirm(false) }}
               style={{ padding:"13px 18px", borderRadius:10, border:"1px solid #E8E4FF", background:"#fff", fontSize:13, color:"#4B5275", cursor:"pointer" }}>
               ↺ Re-generate
             </button>

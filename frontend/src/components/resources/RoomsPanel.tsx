@@ -229,7 +229,7 @@ function RoomRow_({ room, classOpts, subjectOpts, assignedClasses, onUpdate, onU
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export function RoomsPanel({ rooms, setRooms, sections, setSections, subjects, onScopeClick, onAIFix }: {
+export function RoomsPanel({ rooms, setRooms, sections, setSections, subjects, onScopeClick, onAIFix, aiLoading, aiApplied }: {
   rooms: RoomExt[]
   setRooms: (r: RoomExt[]) => void
   sections: Section[]
@@ -237,6 +237,8 @@ export function RoomsPanel({ rooms, setRooms, sections, setSections, subjects, o
   subjects: Subject[]
   onScopeClick?: (room: RoomExt, rect: DOMRect) => void
   onAIFix?: () => void
+  aiLoading?: boolean
+  aiApplied?: boolean
 }) {
   const [search, setSearch]         = useState('')
   const [importOpen, setImportOpen] = useState(false)
@@ -391,20 +393,30 @@ export function RoomsPanel({ rooms, setRooms, sections, setSections, subjects, o
           >⬆ Import</button>
           {onAIFix && (
             <button
-              onClick={onAIFix}
+              onClick={aiLoading ? undefined : onAIFix}
+              disabled={aiLoading}
               title="AI-assign classes and subjects to all rooms"
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
-                background: P, color: '#fff', border: 'none', borderRadius: 7,
+                background: aiApplied ? '#16a34a' : aiLoading ? '#9b8fef' : P,
+                color: '#fff', border: 'none', borderRadius: 7,
                 padding: '6px 14px', fontSize: 11.5, fontWeight: 700,
-                cursor: 'pointer', fontFamily: 'inherit',
+                cursor: aiLoading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
                 boxShadow: '0 2px 6px rgba(124,111,224,0.28)',
                 whiteSpace: 'nowrap', height: 34, boxSizing: 'border-box' as const,
+                opacity: aiLoading ? 0.85 : 1,
+                transition: 'background 0.2s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = P_D)}
-              onMouseLeave={e => (e.currentTarget.style.background = P)}
-            >⚡ AI Fix</button>
+            >
+              {aiLoading
+                ? <><span style={{ display:'inline-block', width:10, height:10, border:'2px solid rgba(255,255,255,0.4)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.7s linear infinite' }} />Applying…</>
+                : aiApplied
+                  ? <>✓ Applied</>
+                  : <>⚡ AI Fix</>
+              }
+            </button>
           )}
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       </div>
 
