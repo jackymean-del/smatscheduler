@@ -288,18 +288,27 @@ function BreakCell({ p }: { p:Period }) {
 
 // ── Subject color cell ─────────────────────────────────────
 type CellOption = { subject: string; teacher: string; room: string }
-function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher, showTeacher, showRoom, onClick, dragOver, onDragOver, onDrop, onDragLeave, absentHighlight, options }:{
+function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher, showTeacher, showRoom,
+  onClick, dragOver, onDragOver, onDrop, onDragLeave, absentHighlight, options,
+  isDraggable, onDragStart, onDelete, editMode,
+}:{
   subject?:string; teacher?:string; room?:string; isClassTeacher?:boolean; isSub?:boolean; subTeacher?:string;
   showTeacher:boolean; showRoom:boolean; onClick?:()=>void;
   dragOver?:boolean; onDragOver?:(e:React.DragEvent)=>void; onDrop?:(e:React.DragEvent)=>void; onDragLeave?:()=>void;
-  absentHighlight?:boolean;
-  options?: CellOption[];
+  absentHighlight?:boolean; options?: CellOption[];
+  isDraggable?:boolean; onDragStart?:(e:React.DragEvent)=>void; onDelete?:()=>void; editMode?:boolean;
 }) {
+  const [hovered, setHovered] = useState(false)
+  const sharedTdProps = {
+    onDragOver: (e:React.DragEvent) => { e.preventDefault(); onDragOver?.(e) },
+    onDrop,
+    onDragLeave,
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  }
   if (!subject) return (
-    <td style={{ border:"1px solid #E8E4FF", padding:2 }}
-      onDragOver={e => { e.preventDefault(); onDragOver?.(e) }}
-      onDrop={onDrop}
-      onDragLeave={onDragLeave}>
+    <td style={{ border:"1px solid #E8E4FF", padding:2, position:"relative" as const }}
+      {...sharedTdProps}>
       <div onClick={onClick} style={{ height:44, background: dragOver?"#EDE9FF":"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color: dragOver?"#7C6FE0":"#cbd5e1", fontSize:10, cursor: dragOver?"copy":"default", border: dragOver?"2px dashed #7C6FE0":"none", transition:"all 0.12s" }}>
         {dragOver ? "Drop here" : "—"}
       </div>
@@ -308,7 +317,7 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   // ── Multi-option / parallel group block ──────────────────
   if (options && options.length > 1) {
     return (
-      <td style={{ border:"1px solid #E8E4FF", padding:2 }} onClick={onClick}>
+      <td style={{ border: dragOver?"2px dashed #7C6FE0":"1px solid #E8E4FF", padding:2, position:"relative" as const }} onClick={onClick} {...sharedTdProps}>
         <div style={{ borderRadius:5, padding:"3px 5px", minHeight:44, background:"linear-gradient(135deg,#F5F2FF 0%,#FAFAFE 100%)", borderLeft:"3px solid #7C6FE0", border:"1px solid #D8D2FF", position:"relative" as const, cursor:onClick?"pointer":"default" }}>
           {absentHighlight && <span style={{ position:"absolute" as const, top:2, left:3, fontSize:8, color:"#D4920E" }}>⚠</span>}
           {options.map((opt, i) => {
@@ -324,6 +333,10 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
             )
           })}
         </div>
+        {editMode && hovered && onDelete && (
+          <button onClick={e => { e.stopPropagation(); onDelete() }}
+            style={{ position:"absolute" as const, top:3, right:3, width:16, height:16, borderRadius:"50%", border:"none", background:"#ef4444", color:"#fff", fontSize:9, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", zIndex:10, lineHeight:1 }}>✕</button>
+        )}
       </td>
     )
   }
@@ -332,9 +345,13 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   const effectiveRoom    = room    || options?.[0]?.room
   const colorClass = getSubjectColor(subject)
   return (
-    <td style={{ border:"1px solid #E8E4FF", padding:2 }}>
-      <div className={colorClass} onClick={onClick}
-        style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:onClick?"pointer":"default", outline:absentHighlight?"3px solid #f59e0b":isSub?"2px dashed #f59e0b":"none", outlineOffset:absentHighlight?"-2px":undefined, position:"relative" as const }}>
+    <td style={{ border: dragOver?"2px dashed #7C6FE0":"1px solid #E8E4FF", padding:2, position:"relative" as const, background: dragOver?"#EDE9FF":undefined }}
+      {...sharedTdProps}>
+      <div className={colorClass}
+        draggable={isDraggable}
+        onDragStart={isDraggable ? onDragStart : undefined}
+        onClick={onClick}
+        style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:isDraggable?"grab":onClick?"pointer":"default", outline:absentHighlight?"3px solid #f59e0b":isSub?"2px dashed #f59e0b":"none", outlineOffset:absentHighlight?"-2px":undefined, position:"relative" as const }}>
         {isSub && <span style={{ position:"absolute" as const, top:2, right:3, width:6, height:6, borderRadius:"50%", background:"#f59e0b" }} title="Substituted" />}
         {absentHighlight && <span style={{ position:"absolute" as const, top:2, left:3, fontSize:8, color:"#D4920E" }}>⚠</span>}
         <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{subject}</div>
@@ -346,6 +363,19 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
         )}
         {showRoom && effectiveRoom && <div style={{ fontSize:8, opacity:0.55, marginTop:1 }}>{effectiveRoom}</div>}
       </div>
+      {editMode && hovered && (
+        <div style={{ position:"absolute" as const, top:3, right:3, display:"flex", gap:2, zIndex:10 }}>
+          {onDelete && (
+            <button onClick={e => { e.stopPropagation(); onDelete() }}
+              title="Clear period"
+              style={{ width:16, height:16, borderRadius:"50%", border:"none", background:"#ef4444", color:"#fff", fontSize:9, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>✕</button>
+          )}
+          {isDraggable && (
+            <div style={{ width:14, height:14, borderRadius:3, background:"rgba(124,111,224,0.2)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"grab", fontSize:8, color:"#7C6FE0" }}
+              title="Drag to swap">⠿</div>
+          )}
+        </div>
+      )}
     </td>
   )
 }
@@ -552,8 +582,38 @@ export function TimetablePage() {
       return
     }
     if (!dragItem) return
+    const from = dragItem
     setDragItem(null)
-    setEditTarget({ section, day, periodId })
+    // Direct cell-to-cell swap — no modal
+    if (from.section !== section) return  // cross-section swap not allowed
+    const fromCell = classTT[from.section]?.[from.day]?.[from.periodId]
+    const toCell   = classTT[section]?.[day]?.[periodId]
+    if (!fromCell?.subject) return  // nothing to drag
+    // Teacher conflict check: would the from-cell teacher clash at the target slot?
+    const fromTeacherBusy = fromCell.teacher && sections.some(s =>
+      s.name !== section && classTT[s.name]?.[day]?.[periodId]?.teacher === fromCell.teacher
+    )
+    const toTeacherBusy = toCell?.teacher && sections.some(s =>
+      s.name !== from.section && classTT[s.name]?.[from.day]?.[from.periodId]?.teacher === toCell.teacher
+    )
+    if (fromTeacherBusy || toTeacherBusy) {
+      alert(`Cannot swap: teacher conflict detected.`)
+      return
+    }
+    const newTT = { ...classTT }
+    newTT[section] = { ...newTT[section] }
+    newTT[section][day] = { ...(newTT[section][day] ?? {}) }
+    newTT[from.section] = { ...newTT[from.section] }
+    newTT[from.section][from.day] = { ...(newTT[from.section][from.day] ?? {}) }
+    // Swap the two cells (or move if target is empty)
+    if (toCell?.subject) {
+      newTT[section][day][periodId] = fromCell
+      newTT[from.section][from.day][from.periodId] = toCell
+    } else {
+      newTT[section][day][periodId] = fromCell
+      delete (newTT[from.section][from.day] as any)[from.periodId]
+    }
+    setClassTT(newTT)
   }
 
   // ── Absent teacher slots on selected day ──────────────────
@@ -672,11 +732,21 @@ export function TimetablePage() {
                           isClassTeacher={cell?.isClassTeacher} isSub={isSub} subTeacher={subTeacher}
                           showTeacher={showTeacher} showRoom={showRoom}
                           absentHighlight={highlight}
-                          dragOver={dragOverCell === cellKey && !cell?.subject}
-                          onDragOver={() => !cell?.subject && setDragOverCell(cellKey)}
+                          dragOver={dragOverCell === cellKey}
+                          onDragOver={() => setDragOverCell(cellKey)}
                           onDrop={e => handleDrop(e, sn, day, p.id)}
                           onDragLeave={() => setDragOverCell(null)}
-                          onClick={() => editMode ? setEditTarget({section:sn, day, periodId:p.id}) : undefined}
+                          onClick={() => editMode && !cell?.subject ? setEditTarget({section:sn, day, periodId:p.id}) : undefined}
+                          isDraggable={editMode && !!cell?.subject}
+                          onDragStart={e => handleDragStart(e, {section:sn, day, periodId:p.id})}
+                          onDelete={() => {
+                            const newTT = { ...classTT }
+                            newTT[sn] = { ...newTT[sn] }
+                            newTT[sn][day] = { ...newTT[sn][day] }
+                            delete (newTT[sn][day] as any)[p.id]
+                            setClassTT(newTT)
+                          }}
+                          editMode={editMode}
                         />
                       )
                     })}
@@ -739,42 +809,30 @@ export function TimetablePage() {
                       }
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
                       const cell = sd[day]?.[p.id]
+                      const cellKeyT = `${sn}|${day}|${p.id}`
                       const highlight = !!(absentHL && cell?.teacher === absentHL.teacher && day === absentHL.day)
-                      if (!cell?.subject) return <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}><div style={{ height:38, background:"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:10 }}>—</div></td>
-                      const cellOpts = (cell as any)?.options as CellOption[] | undefined
-                      // Multi-option parallel block
-                      if (cellOpts && cellOpts.length > 1) {
-                        return (
-                          <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }} onClick={() => editMode && setEditTarget({section:sn, day, periodId:p.id})}>
-                            <div style={{ borderRadius:5, padding:"3px 5px", minHeight:38, background:"linear-gradient(135deg,#F5F2FF 0%,#FAFAFE 100%)", borderLeft:"3px solid #7C6FE0", border:"1px solid #D8D2FF", cursor:editMode?"pointer":"default", outline:highlight?"3px solid #f59e0b":"none", outlineOffset:"-2px" }}>
-                              {cellOpts.map((opt, i) => {
-                                const oc = getSubjectColor(opt.subject)
-                                return (
-                                  <div key={i} style={{ marginBottom: i < cellOpts.length-1 ? 3 : 0, borderBottom: i < cellOpts.length-1 ? "1px dashed #E8E4FF" : "none", paddingBottom: i < cellOpts.length-1 ? 3 : 0 }}>
-                                    <div className={oc} style={{ borderRadius:3, padding:"2px 4px" }}>
-                                      <div style={{ fontSize:10, fontWeight:700 }}>{opt.subject}</div>
-                                      {showTeacher && opt.teacher && <div style={{ fontSize:9, opacity:0.75 }}>{opt.teacher}</div>}
-                                      {showRoom && opt.room && <div style={{ fontSize:8, opacity:0.55 }}>{opt.room}</div>}
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </td>
-                        )
-                      }
-                      // Single subject (with options[0] fallback)
-                      const effectiveTeacherT = cell.teacher || cellOpts?.[0]?.teacher
-                      const effectiveRoomT    = cell.room    || cellOpts?.[0]?.room
-                      const colorClass = getSubjectColor(cell.subject)
                       return (
-                        <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
-                          <div className={colorClass} onClick={() => editMode && setEditTarget({section:sn, day, periodId:p.id})} style={{ borderRadius:5, padding:"4px 7px", minHeight:38, cursor:editMode?"pointer":"default", outline:highlight?"3px solid #f59e0b":"none", outlineOffset:"-2px" }}>
-                            <div style={{ fontSize:10, fontWeight:700 }}>{cell.subject}</div>
-                            {showTeacher && effectiveTeacherT && <div style={{ fontSize:9, opacity:0.75 }}>{effectiveTeacherT}</div>}
-                            {showRoom && effectiveRoomT && <div style={{ fontSize:8, opacity:0.55 }}>{effectiveRoomT}</div>}
-                          </div>
-                        </td>
+                        <SubjectCell key={day}
+                          subject={cell?.subject} teacher={cell?.teacher} room={cell?.room}
+                          options={(cell as any)?.options as CellOption[] | undefined}
+                          showTeacher={showTeacher} showRoom={showRoom}
+                          absentHighlight={highlight}
+                          dragOver={dragOverCell === cellKeyT}
+                          onDragOver={() => setDragOverCell(cellKeyT)}
+                          onDrop={e => handleDrop(e, sn, day, p.id)}
+                          onDragLeave={() => setDragOverCell(null)}
+                          onClick={() => editMode && !cell?.subject ? setEditTarget({section:sn, day, periodId:p.id}) : undefined}
+                          isDraggable={editMode && !!cell?.subject}
+                          onDragStart={e => handleDragStart(e, {section:sn, day, periodId:p.id})}
+                          onDelete={() => {
+                            const newTT = { ...classTT }
+                            newTT[sn] = { ...newTT[sn] }
+                            newTT[sn][day] = { ...newTT[sn][day] }
+                            delete (newTT[sn][day] as any)[p.id]
+                            setClassTT(newTT)
+                          }}
+                          editMode={editMode}
+                        />
                       )
                     })}
                   </tr>
