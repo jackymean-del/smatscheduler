@@ -261,6 +261,16 @@ function isFullLunchColumn(
   })
 }
 
+// ── Shared lunch break cell — always shows class name for clarity ──
+function LunchCell({ id, secName }: { id: string; secName?: string }) {
+  return (
+    <td key={id} style={{ background:"#FFFBEB", border:"1px solid #E8E4FF", padding:"4px 6px", textAlign:"center" as const, verticalAlign:"middle" as const }}>
+      <div style={{ fontSize:9, fontStyle:"italic", color:"#D4920E", fontWeight:600, lineHeight:1.4 }}>Lunch Break</div>
+      {secName && <div style={{ fontSize:9, color:"#D4920E", opacity:0.8, fontWeight:500 }}>{secName}</div>}
+    </td>
+  )
+}
+
 // ── Drag highlight helpers ─────────────────────────────────────
 // RULE: blank cells → colour fill only (no border change)
 //       filled cells → colour border only (no background change)
@@ -1404,9 +1414,7 @@ export function TimetablePage() {
                       const prevPeriod = brk ? classPeriods[brk.afterPeriod - 1] : null
                       const prevCell  = prevPeriod ? sch[day]?.[prevPeriod.id] : null
                       const hasLunch  = !!prevCell?.sectionName && sectionHasBreak(prevCell.sectionName, p.id, cwBreaksTT)
-                      if (hasLunch) return (
-                        <td key={p.id} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, color:"#D4920E", fontSize:9, fontStyle:"italic", padding:6 }}>Lunch Break</td>
-                      )
+                      if (hasLunch) return <LunchCell id={p.id} secName={prevCell?.sectionName} />
                       return (
                         <td key={p.id} style={{ border:"1px solid #E8E4FF", padding:2 }}>
                           <div style={{ height:44, background:"#FAFAFE", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:9, fontStyle:"italic" }}>Free</div>
@@ -1439,11 +1447,7 @@ export function TimetablePage() {
                       onDragLeave: () => setDragOverCell(null),
                     }
                     if (!cell?.subject) {
-                      if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return (
-                        <td key={p.id} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, color:"#D4920E", fontSize:9, fontStyle:"italic", padding:6 }}>
-                          Lunch Break
-                        </td>
-                      )
+                      if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return <LunchCell id={p.id} secName={cell?.sectionName} />
                       // Upcoming lunch notification: if any of teacher's sections
                       // has a lunch break immediately after this class period
                       const periodN = classPeriods.findIndex(cp => cp.id === p.id) + 1
@@ -1455,14 +1459,7 @@ export function TimetablePage() {
                             (brk.classes.length === 0 || brk.classes.includes(ck))
                           )
                         })
-                        if (lunchSec) return (
-                          <td key={p.id} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", padding:4 }}>
-                            <div style={{ display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center", minHeight:44, gap:2 }}>
-                              <div style={{ fontSize:9, fontStyle:"italic", color:"#D4920E", fontWeight:600 }}>Lunch Break</div>
-                              <div style={{ fontSize:9, color:"#D4920E", opacity:0.75 }}>{lunchSec}</div>
-                            </div>
-                          </td>
-                        )
+                        if (lunchSec) return <LunchCell id={p.id} secName={lunchSec} />
                       }
                       return (
                         <td key={p.id} {...ttDragProps}
@@ -1582,9 +1579,7 @@ export function TimetablePage() {
                       if (p.type === 'lunch') {
                         const prevCell = mixedPrevPeriod ? sch[day]?.[mixedPrevPeriod.id] : null
                         const hasLunch = !!prevCell?.sectionName && sectionHasBreak(prevCell.sectionName, p.id, cwBreaksTTT)
-                        if (hasLunch) return (
-                          <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>Lunch Break</td>
-                        )
+                        if (hasLunch) return <LunchCell id={day} secName={prevCell?.sectionName} />
                         return (
                           <td key={day} style={{ border:"1px solid #E8E4FF", padding:2 }}>
                             <div style={{ height:42, background:"#FAFAFE", borderRadius:4, display:"flex", alignItems:"center", justifyContent:"center", color:"#cbd5e1", fontSize:9, fontStyle:"italic" }}>Free</div>
@@ -1615,9 +1610,7 @@ export function TimetablePage() {
                         onDragLeave: () => setDragOverCell(null),
                       }
                       if (!cell?.subject) {
-                        if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return (
-                          <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, color:"#D4920E", fontSize:9, fontStyle:"italic", padding:6 }}>Lunch Break</td>
-                        )
+                        if ((cell as any)?.isLunch || (cell as any)?.type === "lunch") return <LunchCell id={day} secName={cell?.sectionName} />
                         const periodN = classPeriods.findIndex(cp => cp.id === p.id) + 1
                         if (periodN > 0 && cwBreaksTTT?.length) {
                           const lunchSec = tdata.classes.find(cls => {
@@ -1627,14 +1620,7 @@ export function TimetablePage() {
                               (brk.classes.length === 0 || brk.classes.includes(ck))
                             )
                           })
-                          if (lunchSec) return (
-                            <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", padding:4 }}>
-                              <div style={{ display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center", minHeight:42, gap:2 }}>
-                                <div style={{ fontSize:9, fontStyle:"italic", color:"#D4920E", fontWeight:600 }}>Lunch Break</div>
-                                <div style={{ fontSize:9, color:"#D4920E", opacity:0.75 }}>{lunchSec}</div>
-                              </div>
-                            </td>
-                          )
+                          if (lunchSec) return <LunchCell id={day} secName={lunchSec} />
                         }
                         return (
                           <td key={day} {...ttTDragProps}
