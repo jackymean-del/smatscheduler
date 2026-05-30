@@ -376,22 +376,26 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
     onMouseEnter: () => setHovered(true),
     onMouseLeave: () => setHovered(false),
   }
-  // Warm colors for drag state
-  const isConflict = !!hasConflict
-  const dropBg     = isConflict ? "#FEE2E2" : "#DCFCE7"
-  const dropBorder = isConflict ? "#FCA5A5" : "#86EFAC"
-  const dropBorderActive = isConflict ? "#EF4444" : "#16A34A"
+  // Warm drag state colors
+  const isConflict     = !!hasConflict
+  const safeFill       = "#D1FAE5"  // empty cell safe fill
+  const conflictFill   = "#FEE2E2"  // empty cell conflict fill
+  const safeOutline    = "#10B981"  // filled cell safe border
+  const conflictOutline= "#EF4444"  // filled cell conflict border
 
+  // ── Empty cell ────────────────────────────────────────────
   if (!subject) return (
     <td style={{
-      border: dragOver ? `2px solid ${dropBorderActive}` : isDropTarget ? `1.5px dashed ${dropBorder}` : "1px solid #E8E4FF",
+      border: "1px solid #E8E4FF",   // never change border on empty cells
       padding:2, position:"relative" as const,
-      background: isDropTarget ? dropBg : undefined,
-      transition:"all 0.1s",
+      background: isDropTarget        // fill only, no outline
+        ? (isConflict ? conflictFill : safeFill)
+        : undefined,
+      transition:"background 0.1s",
     }} {...sharedTdProps}>
       <div onClick={onClick} style={{
-        height:44, borderRadius:5, transition:"all 0.12s",
-        cursor: isDropTarget ? (hasConflict?"not-allowed":"copy") : "default",
+        height:44, borderRadius:5,
+        cursor: isDropTarget ? (isConflict?"not-allowed":"copy") : "default",
       }} />
     </td>
   )
@@ -421,13 +425,16 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
       </td>
     )
   }
-  // ── Single subject (with teacher fallback from options[0]) ─
+  // ── Filled cell ───────────────────────────────────────────
   const effectiveTeacher = teacher || options?.[0]?.teacher
   const effectiveRoom    = room    || options?.[0]?.room
   const colorClass = getSubjectColor(subject)
   return (
     <td style={{
-      border: dragOver ? `2px solid ${dropBorderActive}` : isDropTarget ? `1.5px dashed ${dropBorder}` : "1px solid #E8E4FF",
+      // filled cell: solid 2px colour OUTLINE only, no background change
+      border: isDropTarget
+        ? `2px solid ${isConflict ? conflictOutline : safeOutline}`
+        : "1px solid #E8E4FF",
       padding:2, position:"relative" as const,
       transition:"border 0.1s",
     }} {...sharedTdProps}>
@@ -921,8 +928,17 @@ export function TimetablePage() {
 
   // ── DnD handlers ──
   const handleDragStart = (e: React.DragEvent, item: {section:string;day:string;periodId:string}) => {
+    const cell = classTT[item.section]?.[item.day]?.[item.periodId]
+    // Prevent dragging class-teacher's designated period
+    if (cell?.isClassTeacher) {
+      e.preventDefault()
+      setConflictWarning(
+        `${cell.teacher} is the Class Teacher of ${item.section}.\n\nThis period is designated for the Class Teacher and cannot be moved to another slot.`
+      )
+      return
+    }
     setDragItem(item)
-    e.dataTransfer.effectAllowed = "copy"
+    e.dataTransfer.effectAllowed = "move"
   }
   // forcedTeacher: when dropping in teacher-view, always assign to the viewed teacher
   // rather than letting pickBestTeacher pick a different (lower-workload) teacher.

@@ -371,14 +371,14 @@ function Block({
   block, left, width, rowH, compact, dayKey,
   showTeacherVal, showRoomVal, showTimeVal, shortNamesVal, viewMode,
   staff, subjects, editMode, isSrcBlock,
-  onHover, onLeave, onClick, onEdit, onDelete, onDragStart, onDragEnd,
+  onHover, onLeave, onClick, onEdit, onDelete, onDragStart, onDragEnd, onClassTeacherDragAttempt,
 }: {
   block:TimeBlock; left:number; width:number; rowH:number; compact:boolean; dayKey:string
   showTeacherVal:boolean; showRoomVal:boolean; showTimeVal:boolean; shortNamesVal:boolean
   viewMode:CalendarViewProps["viewMode"]
   staff: Staff[]; subjects: Subject[]
   editMode: boolean
-  isSrcBlock: boolean   // is THIS the block being dragged?
+  isSrcBlock: boolean
   onHover:(b:TimeBlock,e:React.MouseEvent)=>void
   onLeave:()=>void
   onClick:(b:TimeBlock)=>void
@@ -386,6 +386,7 @@ function Block({
   onDelete?: (section:string,day:string,periodId:string)=>void
   onDragStart?: (e:React.DragEvent,section:string,day:string,periodId:string)=>void
   onDragEnd?: ()=>void
+  onClassTeacherDragAttempt?: (msg:string)=>void
 }) {
   if (width <= 0) return null
   const [hovered, setHovered] = useState(false)
@@ -448,7 +449,17 @@ function Block({
       draggable={editMode && !!block.subject}
       onMouseEnter={e=>{setHovered(true); onHover(block,e)}}
       onMouseLeave={()=>{setHovered(false); onLeave()}}
-      onDragStart={e=>{setHovered(false); onDragStart?.(e, block.sectionName, dayKey, block.periodId)}}
+      onDragStart={e=>{
+        if (block.isClassTeacher) {
+          e.preventDefault()
+          onClassTeacherDragAttempt?.(
+            `${block.teacher} is the Class Teacher of ${block.sectionName}.\n\nThis period is designated for the Class Teacher and cannot be moved to another slot.`
+          )
+          return
+        }
+        setHovered(false)
+        onDragStart?.(e, block.sectionName, dayKey, block.periodId)
+      }}
       onDragEnd={()=>onDragEnd?.()}
       onDoubleClick={()=>onEdit?.(block.sectionName, dayKey, block.periodId)}
       onClick={()=>onClick(block)}
@@ -961,6 +972,7 @@ export function CalendarView({
             onHover={(bl,e)=>onHover(bl,e,dayKey)} onLeave={onLeave} onClick={bl=>onClick(bl,dayKey)}
             onEdit={onCellEdit}
             onDelete={onCellDelete ? (sec,d,p)=>onCellDelete(sec,d,p) : undefined}
+            onClassTeacherDragAttempt={(msg)=>setConflictWarning(msg)}
             onDragStart={(_e,sec,d,p)=>{
               setTooltip(null)
               setDragSrcKey(b.key)
