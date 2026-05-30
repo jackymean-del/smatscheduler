@@ -1425,9 +1425,17 @@ export function TimetablePage() {
                       poolDragItem ? (!!ttSecName && poolDragItem.section === ttSecName)
                                    : isSameTeacherDrag   // same teacher → all his slots are droppable
                     )
+                    // Blank cell: use dragItem.section as fallback (move assignment to this free slot)
+                    const ttDropSec = ttSecName || (isSameTeacherDrag && dragItem ? dragItem.section : "")
+                    const ttConflict = ttIsTarget ? checkSwapConflict(ttDropSec, day, p.id) : null
                     const ttDragProps = {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttCellKey) },
-                      onDrop:     (e: React.DragEvent) => { if (ttSecName) handleDrop(e, ttSecName, day, p.id, tn) },
+                      onDrop: (e: React.DragEvent) => {
+                        e.preventDefault()
+                        if (!ttDropSec || !dragItem) return
+                        if (ttConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(ttConflict); return }
+                        handleDrop(e, ttDropSec, day, p.id, tn)
+                      },
                       onDragLeave: () => setDragOverCell(null),
                     }
                     if (!cell?.subject) {
@@ -1458,8 +1466,8 @@ export function TimetablePage() {
                       }
                       return (
                         <td key={p.id} {...ttDragProps}
-                          style={{ ...dragTdStyle(ttIsTarget, !!checkSwapConflict(ttSecName,day,p.id), false), position:"relative" as const }}>
-                          <div style={dragInnerStyle(ttIsTarget, !!checkSwapConflict(ttSecName,day,p.id))} />
+                          style={{ ...dragTdStyle(ttIsTarget, !!ttConflict, false), position:"relative" as const }}>
+                          <div style={dragInnerStyle(ttIsTarget, !!ttConflict)} />
                         </td>
                       )
                     }
@@ -1467,7 +1475,7 @@ export function TimetablePage() {
                     return (
                       <TeacherCell key={p.id} colorClass={colorClass} cell={cell} showRoom={showRoom}
                         editMode={editMode} dragOver={ttDragOver} isDropTarget={ttIsTarget}
-                        hasConflict={!!checkSwapConflict(ttSecName,day,p.id)}
+                        hasConflict={!!ttConflict}
                         dragProps={ttDragProps}
                         onDragStart={editMode ? e => handleDragStart(e, {section:ttSecName, day, periodId:p.id}) : undefined}
                         onDelete={editMode ? () => {
@@ -1592,11 +1600,18 @@ export function TimetablePage() {
                       const ttTDragOver = dragOverCell === ttTKey
                       const ttTIsTarget = isDragging && (
                         poolDragItem ? (!!ttTSecName && poolDragItem.section === ttTSecName)
-                                     : isSameTeacherDrag   // same teacher → all his slots droppable
+                                     : isSameTeacherDrag
                       )
+                      const ttTDropSec = ttTSecName || (isSameTeacherDrag && dragItem ? dragItem.section : "")
+                      const ttTConflict = ttTIsTarget ? checkSwapConflict(ttTDropSec, day, p.id) : null
                       const ttTDragProps = {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(ttTKey) },
-                        onDrop:     (e: React.DragEvent) => { if (ttTSecName) handleDrop(e, ttTSecName, day, p.id, tn) },
+                        onDrop: (e: React.DragEvent) => {
+                          e.preventDefault()
+                          if (!ttTDropSec || !dragItem) return
+                          if (ttTConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(ttTConflict); return }
+                          handleDrop(e, ttTDropSec, day, p.id, tn)
+                        },
                         onDragLeave: () => setDragOverCell(null),
                       }
                       if (!cell?.subject) {
@@ -1623,8 +1638,8 @@ export function TimetablePage() {
                         }
                         return (
                           <td key={day} {...ttTDragProps}
-                            style={{ ...dragTdStyle(ttTIsTarget, !!checkSwapConflict(ttTSecName,day,p.id), false), position:"relative" as const }}>
-                            <div style={dragInnerStyle(ttTIsTarget, !!checkSwapConflict(ttTSecName,day,p.id))} />
+                            style={{ ...dragTdStyle(ttTIsTarget, !!ttTConflict, false), position:"relative" as const }}>
+                            <div style={dragInnerStyle(ttTIsTarget, !!ttTConflict)} />
                           </td>
                         )
                       }
@@ -1632,7 +1647,7 @@ export function TimetablePage() {
                       return (
                         <TeacherCell key={day} colorClass={colorClass} cell={cell} showRoom={showRoom}
                           editMode={editMode} dragOver={ttTDragOver} isDropTarget={ttTIsTarget}
-                          hasConflict={!!checkSwapConflict(ttTSecName,day,p.id)}
+                          hasConflict={!!ttTConflict}
                           dragProps={ttTDragProps}
                           onDragStart={editMode ? e => handleDragStart(e, {section:ttTSecName, day, periodId:p.id}) : undefined}
                           onDelete={editMode ? () => {
@@ -1697,24 +1712,30 @@ export function TimetablePage() {
                     const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
                     // DnD: use first hit section (or pool chip section if dragging this subject)
                     const subSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
-                    const subCellKey = subSecName ? `${subSecName}|${day}|${p.id}` : ""
-                    const subDragOver = !!subCellKey && dragOverCell === subCellKey
+                    const subCellKey = subSecName ? `${subSecName}|${day}|${p.id}` : `__sub|${day}|${p.id}`
+                    const subDragOver = dragOverCell === subCellKey
                     const subIsTarget = isDragging && !!subSecName && (poolDragItem?.section === subSecName || dragItem?.section === subSecName)
-                    const subDragProps = subSecName ? {
+                    const subConflict = subIsTarget ? checkSwapConflict(subSecName, day, p.id) : null
+                    const subDragProps = {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(subCellKey) },
-                      onDrop: (e: React.DragEvent) => handleDrop(e, subSecName, day, p.id),
+                      onDrop: (e: React.DragEvent) => {
+                        e.preventDefault()
+                        if (!subSecName || !dragItem) return
+                        if (subConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(subConflict); return }
+                        handleDrop(e, subSecName, day, p.id)
+                      },
                       onDragLeave: () => setDragOverCell(null),
-                    } : {}
+                    }
                     if (!hits.length) return (
                       <td key={p.id} {...subDragProps}
-                        style={{ ...dragTdStyle(subIsTarget, !!checkSwapConflict(subSecName,day,p.id), false), position:"relative" as const }}>
-                        <div style={dragInnerStyle(subIsTarget, !!checkSwapConflict(subSecName,day,p.id))} />
+                        style={{ ...dragTdStyle(subIsTarget, !!subConflict, false), position:"relative" as const }}>
+                        <div style={dragInnerStyle(subIsTarget, !!subConflict)} />
                       </td>
                     )
                     const colorClass = getSubjectColor(subName)
                     return (
                       <td key={p.id} {...subDragProps}
-                        style={{ ...dragTdStyle(subIsTarget, !!checkSwapConflict(subSecName,day,p.id), true), position:"relative" as const }}>
+                        style={{ ...dragTdStyle(subIsTarget, !!subConflict, true), position:"relative" as const }}>
                         <div className={colorClass}
                           draggable={editMode && !!subSecName}
                           onDragStart={editMode && subSecName ? e => handleDragStart(e, {section:subSecName, day, periodId:p.id}) : undefined}
@@ -1801,24 +1822,30 @@ export function TimetablePage() {
                       if (isBreak) return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{p.name}</td>
                       const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
                       const subTSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
-                      const subTKey = subTSecName ? `${subTSecName}|${day}|${p.id}` : ""
-                      const subTDragOver = !!subTKey && dragOverCell === subTKey
+                      const subTKey = subTSecName ? `${subTSecName}|${day}|${p.id}` : `__subt|${day}|${p.id}`
+                      const subTDragOver = dragOverCell === subTKey
                       const subTIsTarget = isDragging && !!subTSecName && (poolDragItem?.section === subTSecName || dragItem?.section === subTSecName)
-                      const subTDragProps = subTSecName ? {
+                      const subTConflict = subTIsTarget ? checkSwapConflict(subTSecName, day, p.id) : null
+                      const subTDragProps = {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(subTKey) },
-                        onDrop: (e: React.DragEvent) => handleDrop(e, subTSecName, day, p.id),
+                        onDrop: (e: React.DragEvent) => {
+                          e.preventDefault()
+                          if (!subTSecName || !dragItem) return
+                          if (subTConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(subTConflict); return }
+                          handleDrop(e, subTSecName, day, p.id)
+                        },
                         onDragLeave: () => setDragOverCell(null),
-                      } : {}
+                      }
                       if (!hits.length) return (
                         <td key={day} {...subTDragProps}
-                          style={{ ...dragTdStyle(subTIsTarget, !!checkSwapConflict(subTSecName,day,p.id), false), position:"relative" as const }}>
-                          <div style={dragInnerStyle(subTIsTarget, !!checkSwapConflict(subTSecName,day,p.id))} />
+                          style={{ ...dragTdStyle(subTIsTarget, !!subTConflict, false), position:"relative" as const }}>
+                          <div style={dragInnerStyle(subTIsTarget, !!subTConflict)} />
                         </td>
                       )
                       const colorClass = getSubjectColor(subName)
                       return (
                         <td key={day} {...subTDragProps}
-                          style={{ ...dragTdStyle(subTIsTarget, !!checkSwapConflict(subTSecName,day,p.id), true), position:"relative" as const }}>
+                          style={{ ...dragTdStyle(subTIsTarget, !!subTConflict, true), position:"relative" as const }}>
                           <div className={colorClass}
                             draggable={editMode && !!subTSecName}
                             onDragStart={editMode && subTSecName ? e => handleDragStart(e, {section:subTSecName, day, periodId:p.id}) : undefined}
@@ -1851,6 +1878,8 @@ export function TimetablePage() {
   // ═══════════════════════════════════════════════════════════
   const renderRoomTT = (roomName: string) => {
     const usedDays = config.workDays
+    // Room view: highlight all slots in this room regardless of section
+    const isSameRoomDrag = isDragging && (dragItem ? classTT[dragItem.section]?.[dragItem.day]?.[dragItem.periodId]?.room === roomName : false)
     return (
       <div>
         <div style={{ padding:"12px 16px", background:"#FAFAFE", borderBottom:"1px solid #E8E4FF" }}>
@@ -1886,24 +1915,34 @@ export function TimetablePage() {
                       return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
                     })[0]
                     const rmSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
-                    const rmKey = rmSecName ? `${rmSecName}|${day}|${p.id}` : ""
-                    const rmDragOver = !!rmKey && dragOverCell === rmKey
-                    const rmIsTarget = isDragging && !!rmSecName
-                    const rmDragProps = rmSecName ? {
+                    const rmKey = rmSecName ? `${rmSecName}|${day}|${p.id}` : `__rm|${day}|${p.id}`
+                    const rmDragOver = dragOverCell === rmKey
+                    const rmIsTarget = isDragging && (
+                      poolDragItem ? !!rmSecName : isSameRoomDrag
+                    )
+                    // Blank slot: use dragItem.section as fallback (move assignment to this free room slot)
+                    const rmDropSec = rmSecName || (isSameRoomDrag && dragItem ? dragItem.section : "")
+                    const rmConflict = rmIsTarget ? checkSwapConflict(rmDropSec, day, p.id) : null
+                    const rmDragProps = {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(rmKey) },
-                      onDrop: (e: React.DragEvent) => handleDrop(e, rmSecName, day, p.id),
+                      onDrop: (e: React.DragEvent) => {
+                        e.preventDefault()
+                        if (!rmDropSec || !dragItem) return
+                        if (rmConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(rmConflict); return }
+                        handleDrop(e, rmDropSec, day, p.id)
+                      },
                       onDragLeave: () => setDragOverCell(null),
-                    } : {}
+                    }
                     if (!hit) return (
                       <td key={p.id} {...rmDragProps}
-                        style={{ ...dragTdStyle(rmIsTarget, !!checkSwapConflict(rmSecName,day,p.id), false), position:"relative" as const }}>
-                        <div style={dragInnerStyle(rmIsTarget, !!checkSwapConflict(rmSecName,day,p.id))} />
+                        style={{ ...dragTdStyle(rmIsTarget, !!rmConflict, false), position:"relative" as const }}>
+                        <div style={dragInnerStyle(rmIsTarget, !!rmConflict)} />
                       </td>
                     )
                     const colorClass = getSubjectColor(hit.cell.subject)
                     return (
                       <td key={p.id} {...rmDragProps}
-                        style={{ ...dragTdStyle(rmIsTarget, !!checkSwapConflict(rmSecName,day,p.id), true), position:"relative" as const }}>
+                        style={{ ...dragTdStyle(rmIsTarget, !!rmConflict, true), position:"relative" as const }}>
                         <div className={colorClass}
                           draggable={editMode && !!rmSecName}
                           onDragStart={editMode && rmSecName ? e => handleDragStart(e, {section:rmSecName, day, periodId:p.id}) : undefined}
@@ -1929,6 +1968,8 @@ export function TimetablePage() {
   // ═══════════════════════════════════════════════════════════
   const renderRoomTTTransposed = (roomName: string) => {
     const usedDays = config.workDays
+    // Room view: highlight all slots in this room regardless of section
+    const isSameRoomDrag = isDragging && (dragItem ? classTT[dragItem.section]?.[dragItem.day]?.[dragItem.periodId]?.room === roomName : false)
     return (
       <div>
         <div style={{ padding:"12px 16px", background:"#FAFAFE", borderBottom:"1px solid #E8E4FF" }}>
@@ -1983,24 +2024,31 @@ export function TimetablePage() {
                         return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
                       })[0]
                       const rmTSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
-                      const rmTKey = rmTSecName ? `${rmTSecName}|${day}|${p.id}` : ""
-                      const rmTDragOver = !!rmTKey && dragOverCell === rmTKey
-                      const rmTIsTarget = isDragging && !!rmTSecName
-                      const rmTDragProps = rmTSecName ? {
+                      const rmTKey = rmTSecName ? `${rmTSecName}|${day}|${p.id}` : `__rmt|${day}|${p.id}`
+                      const rmTDragOver = dragOverCell === rmTKey
+                      const rmTIsTarget = isDragging && (poolDragItem ? !!rmTSecName : isSameRoomDrag)
+                      const rmTDropSec  = rmTSecName || (isSameRoomDrag && dragItem ? dragItem.section : "")
+                      const rmTConflict = rmTIsTarget ? checkSwapConflict(rmTDropSec, day, p.id) : null
+                      const rmTDragProps = {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCell(rmTKey) },
-                        onDrop: (e: React.DragEvent) => handleDrop(e, rmTSecName, day, p.id),
+                        onDrop: (e: React.DragEvent) => {
+                          e.preventDefault()
+                          if (!rmTDropSec || !dragItem) return
+                          if (rmTConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(rmTConflict); return }
+                          handleDrop(e, rmTDropSec, day, p.id)
+                        },
                         onDragLeave: () => setDragOverCell(null),
-                      } : {}
+                      }
                       if (!hit) return (
                         <td key={day} {...rmTDragProps}
-                          style={{ ...dragTdStyle(rmTIsTarget, !!checkSwapConflict(rmTSecName,day,p.id), false), position:"relative" as const }}>
-                          <div style={dragInnerStyle(rmTIsTarget, !!checkSwapConflict(rmTSecName,day,p.id))} />
+                          style={{ ...dragTdStyle(rmTIsTarget, !!rmTConflict, false), position:"relative" as const }}>
+                          <div style={dragInnerStyle(rmTIsTarget, !!rmTConflict)} />
                         </td>
                       )
                       const colorClass = getSubjectColor(hit.cell.subject)
                       return (
                         <td key={day} {...rmTDragProps}
-                          style={{ ...dragTdStyle(rmTIsTarget, !!checkSwapConflict(rmTSecName,day,p.id), true), position:"relative" as const }}>
+                          style={{ ...dragTdStyle(rmTIsTarget, !!rmTConflict, true), position:"relative" as const }}>
                           <div className={colorClass}
                             draggable={editMode && !!rmTSecName}
                             onDragStart={editMode && rmTSecName ? e => handleDragStart(e, {section:rmTSecName, day, periodId:p.id}) : undefined}
