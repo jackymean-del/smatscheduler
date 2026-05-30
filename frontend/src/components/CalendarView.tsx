@@ -569,12 +569,16 @@ function DropZone({
   if (width <= 0 || block.periodType !== "class") return null
 
   const isConflict = !!conflict
+  const hasFill    = !!block.subject  // filled cell — show outline only, no bg
 
-  // Warm green for safe, warm red for conflict
-  const bg     = isConflict
-    ? (isOver ? "#FEE2E2" : "#FFF1F2")
-    : (isOver ? "#DCFCE7" : "#F0FDF4")
-  const border = isConflict
+  // Warm green = safe, warm red = conflict
+  // Filled cells: border outline only. Empty cells: light fill + border.
+  const bgColor = hasFill
+    ? "transparent"
+    : isConflict
+      ? (isOver ? "#FEE2E2" : "#FFF1F2")
+      : (isOver ? "#DCFCE7" : "#F0FDF4")
+  const borderStyle = isConflict
     ? (isOver ? "2px solid #EF4444"  : "1.5px dashed #FCA5A5")
     : (isOver ? "2px solid #16A34A" : "1.5px dashed #86EFAC")
 
@@ -592,12 +596,14 @@ function DropZone({
         left:left+1, width:Math.max(width-2,2),
         top:compact?2:3, bottom:compact?2:3,
         borderRadius:"0 5px 5px 0",
-        zIndex:20, background:bg, border,
+        zIndex:20,
+        background: bgColor,
+        border: borderStyle,
         transition:"all 0.08s ease",
         cursor: isConflict ? "not-allowed" : "copy",
         overflow:"visible" as const,
       }}>
-      {/* Conflict tooltip on hover */}
+      {/* Conflict tooltip — only on hover over conflict cell */}
       {isOver && isConflict && (
         <div style={{
           position:"absolute" as const,

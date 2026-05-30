@@ -357,17 +357,13 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
     <td style={{
       border: dragOver ? `2px solid ${dropBorderActive}` : isDropTarget ? `1.5px dashed ${dropBorder}` : "1px solid #E8E4FF",
       padding:2, position:"relative" as const,
-      background: dragOver ? dropBg : isDropTarget ? (hasConflict?"#FFF1F1":"#F0FDF4") : undefined,
+      background: isDropTarget ? dropBg : undefined,
+      transition:"all 0.1s",
     }} {...sharedTdProps}>
       <div onClick={onClick} style={{
-        height:44, borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center",
-        fontSize:10, border:"none", transition:"all 0.12s",
-        background: dragOver ? dropBg : isDropTarget ? (hasConflict?"#FEE2E280":"#DCFCE780") : "#FAFAFE",
-        color: dragOver||isDropTarget ? (hasConflict?"#DC2626":"#16A34A") : "#cbd5e1",
+        height:44, borderRadius:5, transition:"all 0.12s",
         cursor: isDropTarget ? (hasConflict?"not-allowed":"copy") : "default",
-      }}>
-        {isDropTarget ? (hasConflict?"✕":"—") : "—"}
-      </div>
+      }} />
     </td>
   )
   // ── Multi-option / parallel group block ──────────────────
@@ -404,13 +400,13 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
     <td style={{
       border: dragOver ? `2px solid ${dropBorderActive}` : isDropTarget ? `1.5px dashed ${dropBorder}` : "1px solid #E8E4FF",
       padding:2, position:"relative" as const,
-      background: dragOver ? dropBg : isDropTarget ? (hasConflict?"#FFF1F1":"#F0FDF4") : undefined,
+      transition:"border 0.1s",
     }} {...sharedTdProps}>
       <div className={colorClass}
         draggable={isDraggable}
         onDragStart={isDraggable ? onDragStart : undefined}
         onClick={onClick}
-        style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:isDraggable?"grab":onClick?"pointer":"default", outline:absentHighlight?"3px solid #f59e0b":isSub?"2px dashed #f59e0b":"none", outlineOffset:absentHighlight?"-2px":undefined, position:"relative" as const }}>
+        style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:isDraggable?(isDropTarget?"default":"grab"):onClick?"pointer":"default", outline:absentHighlight?"3px solid #f59e0b":isSub?"2px dashed #f59e0b":"none", outlineOffset:absentHighlight?"-2px":undefined, position:"relative" as const }}>
         {isSub && <span style={{ position:"absolute" as const, top:2, right:3, width:6, height:6, borderRadius:"50%", background:"#f59e0b" }} title="Substituted" />}
         {absentHighlight && <span style={{ position:"absolute" as const, top:2, left:3, fontSize:8, color:"#D4920E" }}>⚠</span>}
         <div style={{ fontSize:10, fontWeight:700, lineHeight:1.3 }}>{subject}</div>
