@@ -744,8 +744,8 @@ export function CalendarView({
 
   const buildTeacherBlocks = useCallback((tName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
-    // Global breaks
     const gTm=calcTimes(periods,dayStartMin)
+    // Global breaks
     periods.forEach(p=>{
       if(p.type==="class") return
       const t=gTm.get(p.id)!
@@ -755,16 +755,16 @@ export function CalendarView({
         subject:"", teacher:"", room:"", isSub:false, isClassTeacher:false, absent:false,
       })
     })
-    // Class periods: INCLUDE ALL (taught + free slots) so drop zones appear everywhere
+    // ── Taught periods ── (only where this teacher actually teaches)
+    const taughtPeriodIds = new Set<string>()
     sections.forEach(sec=>{
       const ps=buildSecPeriods(sec.name,periods,classwiseBreaks)
       const tm=calcTimes(ps,dayStartMin)
       ps.forEach(p=>{
         if(p.type!=="class") return
         const cell=classTT[sec.name]?.[dayKey]?.[p.id]
-        const isTaught = cell?.teacher===tName
-        // Skip if another teacher teaches (not a free slot for this teacher)
-        if(!isTaught && cell?.teacher) return
+        if(cell?.teacher!==tName || !cell?.subject) return
+        taughtPeriodIds.add(p.id)
         const t=tm.get(p.id)!
         const subKey=`${sec.name}|${dayKey}|${p.id}`
         const isSub=!!substitutions[subKey]
@@ -772,12 +772,27 @@ export function CalendarView({
           key:`${sec.name}|${p.id}|${dayKey}`, periodId:p.id,
           periodName:p.name, periodType:p.type,
           startMin:t.start, endMin:t.end, sectionName:sec.name,
-          subject:isTaught ? (cell.subject??"") : "",
-          teacher:isTaught ? (isSub?substitutions[subKey]:(cell.teacher??"")) : "",
-          room:isTaught ? (cell.room??"") : "",
-          isSub: !!(isTaught && isSub), isClassTeacher:!!(isTaught && cell.isClassTeacher),
-          absent:!!(isTaught && absentHighlights?.some(h=>h.day===dayKey&&h.teacher===tName)),
+          subject:cell.subject??"",
+          teacher:isSub?substitutions[subKey]:(cell.teacher??""),
+          room:cell.room??"",
+          isSub:!!isSub, isClassTeacher:!!(cell.isClassTeacher),
+          absent:!!(absentHighlights?.some(h=>h.day===dayKey&&h.teacher===tName)),
         })
+      })
+    })
+    // ── ONE virtual free block per truly-free period ──
+    // (period where this teacher teaches nobody — safe green drop target)
+    periods.forEach(p=>{
+      if(p.type!=="class") return
+      if(taughtPeriodIds.has(p.id)) return     // teacher is busy here → skip
+      const t=gTm.get(p.id)!
+      blocks.push({
+        key:`__free|${tName}|${p.id}|${dayKey}`, periodId:p.id,
+        periodName:p.name, periodType:"class",
+        startMin:t.start, endMin:t.end,
+        sectionName:"",   // virtual — use dragSrc.section when dropped
+        subject:"", teacher:"", room:"",
+        isSub:false, isClassTeacher:false, absent:false,
       })
     })
     return blocks.sort((a,b)=>a.startMin-b.startMin)
@@ -786,6 +801,7 @@ export function CalendarView({
   const buildRoomBlocks = useCallback((roomName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
     const gTm=calcTimes(periods,dayStartMin)
+    // Global breaks
     periods.forEach(p=>{
       if(p.type==="class") return
       const t=gTm.get(p.id)!
@@ -795,16 +811,16 @@ export function CalendarView({
         subject:"", teacher:"", room:roomName, isSub:false, isClassTeacher:false, absent:false,
       })
     })
-    // Class periods: INCLUDE ALL (assigned to room + free slots) so drop zones appear everywhere
+    // ── Occupied periods ── (only where this room is actually in use)
+    const occupiedPeriodIds = new Set<string>()
     sections.forEach(sec=>{
       const ps=buildSecPeriods(sec.name,periods,classwiseBreaks)
       const tm=calcTimes(ps,dayStartMin)
       ps.forEach(p=>{
         if(p.type!=="class") return
         const cell=classTT[sec.name]?.[dayKey]?.[p.id]
-        const isInThisRoom = cell?.subject && cell.room===roomName
-        // Skip if another room is using this slot (not a free slot for this room)
-        if(!isInThisRoom && cell?.subject && cell.room!==roomName) return
+        if(!cell?.subject || cell.room!==roomName) return
+        occupiedPeriodIds.add(p.id)
         const t=tm.get(p.id)!
         const subKey=`${sec.name}|${dayKey}|${p.id}`
         const isSub=!!substitutions[subKey]
@@ -812,11 +828,25 @@ export function CalendarView({
           key:`${sec.name}|${p.id}|${dayKey}`, periodId:p.id,
           periodName:p.name, periodType:p.type,
           startMin:t.start, endMin:t.end, sectionName:sec.name,
-          subject:isInThisRoom ? (cell.subject??"") : "",
-          teacher:isInThisRoom ? (isSub?substitutions[subKey]:(cell.teacher??"")) : "",
+          subject:cell.subject??"",
+          teacher:isSub?substitutions[subKey]:(cell.teacher??""),
           room:roomName,
-          isSub: !!(isInThisRoom && isSub), isClassTeacher:!!(isInThisRoom && cell.isClassTeacher), absent:false,
+          isSub:!!isSub, isClassTeacher:!!(cell.isClassTeacher), absent:false,
         })
+      })
+    })
+    // ── ONE virtual free block per truly-free period ──
+    periods.forEach(p=>{
+      if(p.type!=="class") return
+      if(occupiedPeriodIds.has(p.id)) return    // room in use → skip
+      const t=gTm.get(p.id)!
+      blocks.push({
+        key:`__free|${roomName}|${p.id}|${dayKey}`, periodId:p.id,
+        periodName:p.name, periodType:"class",
+        startMin:t.start, endMin:t.end,
+        sectionName:"",   // virtual — use dragSrc.section when dropped
+        subject:"", teacher:"", room:"",
+        isSub:false, isClassTeacher:false, absent:false,
       })
     })
     return blocks.sort((a,b)=>a.startMin-b.startMin)
@@ -825,6 +855,7 @@ export function CalendarView({
   const buildSubjectBlocks = useCallback((subjectName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
     const gTm=calcTimes(periods,dayStartMin)
+    // Global breaks
     periods.forEach(p=>{
       if(p.type==="class") return
       const t=gTm.get(p.id)!
@@ -834,16 +865,15 @@ export function CalendarView({
         subject:"", teacher:"", room:"", isSub:false, isClassTeacher:false, absent:false,
       })
     })
-    // Class periods: INCLUDE ALL (taught this subject + free slots) so drop zones appear everywhere
+    // ── Taught periods ── (sections that are scheduled for this subject)
+    // For subject view, multiple sections CAN have the same subject at the same time
     sections.forEach(sec=>{
       const ps=buildSecPeriods(sec.name,periods,classwiseBreaks)
       const tm=calcTimes(ps,dayStartMin)
       ps.forEach(p=>{
         if(p.type!=="class") return
         const cell=classTT[sec.name]?.[dayKey]?.[p.id]
-        const hasThisSubject = cell?.subject===subjectName
-        // Skip if another subject is teaching (not a free slot for this subject)
-        if(!hasThisSubject && cell?.subject) return
+        if(cell?.subject!==subjectName) return
         const t=tm.get(p.id)!
         const subKey=`${sec.name}|${dayKey}|${p.id}`
         const isSub=!!substitutions[subKey]
@@ -851,10 +881,10 @@ export function CalendarView({
           key:`${sec.name}|${p.id}|${dayKey}`, periodId:p.id,
           periodName:p.name, periodType:p.type,
           startMin:t.start, endMin:t.end, sectionName:sec.name,
-          subject:hasThisSubject ? subjectName : "",
-          teacher:hasThisSubject ? (isSub?substitutions[subKey]:(cell.teacher??"")) : "",
-          room:hasThisSubject ? (cell.room??"") : "",
-          isSub: !!(hasThisSubject && isSub), isClassTeacher:!!(hasThisSubject && cell.isClassTeacher), absent:false,
+          subject:subjectName,
+          teacher:isSub?substitutions[subKey]:(cell.teacher??""),
+          room:cell.room??"",
+          isSub:!!isSub, isClassTeacher:!!(cell.isClassTeacher), absent:false,
         })
       })
     })
@@ -1030,24 +1060,26 @@ export function CalendarView({
         const bLeft   = (b.startMin-dayStartMin)*pxPerMin
         const bWidth  = (b.endMin-b.startMin)*pxPerMin
         const isOver  = dragOverKey === b.key
+        // Virtual free blocks (sectionName="") use the dragged cell's section as drop target
+        const dropSection = b.sectionName || dragSrc.section
 
-        // Conflict check — works for both same-section and cross-section swaps
+        // Conflict check — works for same-section and cross-section swaps
         const conflict = getSwapConflict(
           classTT,
           dragSrc.section, dragSrc.day, dragSrc.periodId,
           dayKey, b.periodId,
-          b.sectionName,   // pass target section for cross-section conflict detection
+          dropSection,
         )
         return (
           <DropZone key={`dz-${b.key}`} block={b}
             dayKey={dayKey} left={bLeft} width={bWidth} rowH={rowH} compact={compact}
             isOver={isOver} conflict={conflict}
-            onDragOver={(_sec,_d,_p)=>{ setDragOverKey(b.key); setDragOverDst({section:b.sectionName,day:dayKey,periodId:b.periodId}) }}
+            onDragOver={(_sec,_d,_p)=>{ setDragOverKey(b.key); setDragOverDst({section:dropSection,day:dayKey,periodId:b.periodId}) }}
             onDragLeave={()=>{ if(dragOverKey===b.key){ setDragOverKey(null); setDragOverDst(null) } }}
             onConflictDrop={(reason)=>{ clearDrag(); setConflictWarning(reason) }}
             onDrop={(_sec,_d,_p)=>{
               if(dragSrc && onCellSwap) {
-                onCellSwap(dragSrc, {section:b.sectionName, day:dayKey, periodId:b.periodId})
+                onCellSwap(dragSrc, {section:dropSection, day:dayKey, periodId:b.periodId})
               }
               clearDrag()
             }}
