@@ -446,8 +446,9 @@ function Block({
   const fsSub    = compact ? (width<22?0:8) : (width<28?0:width<55?9.5:11)
   const fsMeta   = compact ? 7 : 9.5
 
-  const isDragging = dragItem?.section === block.sectionName && dragItem?.day === block.sectionName
-  const isDragOverThis = dragOverCell?.section === block.sectionName && dragOverCell?.day === block.sectionName && dragOverCell?.periodId === block.periodId
+  const isDraggingThis = dragItem?.section === block.sectionName && dragItem?.day === dayKey && dragItem?.periodId === block.periodId
+  const isDragOverThis = dragOverCell?.section === block.sectionName && dragOverCell?.day === dayKey && dragOverCell?.periodId === block.periodId
+  const isDroppable = !!dragItem && !isDraggingThis && !block.subject  // Show highlight on empty cells when dragging
   const [hovered, setHovered] = useState(false)
 
   return (
@@ -464,16 +465,16 @@ function Block({
         position:"absolute" as const,
         left: left+1, width: Math.max(width-2, 2),
         top: compact?2:3, bottom: compact?2:3,
-        background: isDragging ? "rgba(124,111,224,0.2)" : isDragOverThis ? "rgba(124,111,224,0.1)" : col.bg,
+        background: isDraggingThis ? "rgba(124,111,224,0.25)" : isDragOverThis ? "rgba(124,111,224,0.15)" : isDroppable ? "rgba(124,111,224,0.08)" : col.bg,
         borderLeft: `3px solid ${col.accent}`,
         borderRadius: "0 5px 5px 0",
-        overflow:"hidden", cursor: editMode && !!onDragStart && !!block.subject ? "grab" : "pointer",
+        overflow:"hidden", cursor: editMode && !!onDragStart && !!block.subject ? "grab" : isDroppable ? "drop" : "pointer",
         padding: width<26?"1px 2px": compact?"2px 5px":"3px 7px",
         display:"flex", flexDirection:"column" as const, justifyContent:"center",
-        outline: isDragOverThis ? "2px solid #7C6FE0" : block.absent?"2px solid #F59E0B":block.isSub?"1.5px dashed #F59E0B":"none",
+        outline: isDragOverThis ? "2px solid #7C6FE0" : isDroppable ? "1.5px dashed #A5B4FC" : block.absent?"2px solid #F59E0B":block.isSub?"1.5px dashed #F59E0B":"none",
         userSelect:"none" as const,
-        boxShadow: isDragging ? "0 4px 12px rgba(0,0,0,0.15)" : "0 1px 3px rgba(0,0,0,0.06)",
-        transition: "all 0.2s ease",
+        boxShadow: isDraggingThis ? "0 4px 12px rgba(0,0,0,0.15)" : isDragOverThis ? "0 2px 8px rgba(124,111,224,0.2)" : "0 1px 3px rgba(0,0,0,0.06)",
+        transition: "all 0.15s ease",
       }}>
       {/* Subject name — in accent color */}
       {fsSub > 0 && (
@@ -515,7 +516,7 @@ function Block({
           width:5, height:5, borderRadius:"50%", background:"#F59E0B" }} />
       )}
       {/* Delete button — shown on hover in edit mode */}
-      {editMode && hovered && onDelete && !!block.subject && (
+      {editMode && hovered && onDelete && !!block.subject && !isDroppable && (
         <button
           onClick={e=>{e.stopPropagation(); onDelete(block.sectionName, dayKey, block.periodId)}}
           style={{
@@ -1282,7 +1283,7 @@ export function CalendarView({
       }}>
         {/* Mode tabs */}
         <div style={{ display:"flex", border:"1px solid #E5EBF5", borderRadius:6, overflow:"hidden" }}>
-          {([["matrix","⊟ Matrix"],["timeline","📅 Weekly"],["month","📆 Month"]] as [CalMode,string][]).map(([m,lbl])=>(
+          {([["matrix","⊟ Matrix"],["timeline","📅 Weekly"],["month","📆 Monthly"]] as [CalMode,string][]).map(([m,lbl])=>(
             <button key={m} onClick={()=>setCalMode(m)}
               style={{
                 padding:"4px 11px", border:"none",

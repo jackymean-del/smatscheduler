@@ -2307,6 +2307,11 @@ export function TimetablePage() {
 
           <div style={{ flex:1 }} />
 
+          {/* ── Global Edit mode toggle ── */}
+          <div style={{ display:"flex", alignItems:"center", paddingRight:8, borderRight:"1px solid #E5EBF5" }}>
+            {TBtn(editMode, () => setEditMode(!editMode), editMode ? "✏️ Editing" : "✏️ Edit")}
+          </div>
+
           {/* ── Traditional / Calendar toggle ── */}
           <div style={{ display:"flex", alignItems:"center", gap:4, paddingRight:8, borderRight:"1px solid #E5EBF5" }}>
             <div style={{ display:"flex", border:"1px solid #E5EBF5", borderRadius:6, overflow:"hidden" }}>
@@ -2439,7 +2444,7 @@ export function TimetablePage() {
             background:"#F8FAFC", borderBottom:"1px solid #E5EBF5",
             padding:"6px 14px", display:"flex", alignItems:"center", gap:6, flexShrink:0, flexWrap:"wrap" as const,
           }}>
-            {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Teacher", "👤")}
+            {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Faculty", "👤")}
             {TBtn(showRoom,    () => setShowRoom(!showRoom),       "Room",    "🚪")}
             {TBtn(showTime,    () => setShowTime(!showTime),       "Time",    "⏱")}
             {TBtn(shortNames,  () => setShortNames(!shortNames),   "Short",   "⇥")}
@@ -2465,12 +2470,11 @@ export function TimetablePage() {
               <button onClick={() => setTransposed(true)}  style={{ padding:"4px 11px", border:"none", background:transposed?"#374151":"#fff",  color:transposed?"#fff":"#64748b",  fontSize:11, fontWeight:500, cursor:"pointer" }}>⊞ Transposed</button>
             </div>
             <div style={{ width:1, height:18, background:"#CBD5E1" }} />
-            {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Teacher", "👤")}
+            {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Faculty", "👤")}
             {TBtn(showRoom,    () => setShowRoom(!showRoom),       "Room",    "🚪")}
             {TBtn(showTime,    () => setShowTime(!showTime),       "Time",    "⏱")}
             {TBtn(shortNames,  () => setShortNames(!shortNames),   "Short",   "⇥")}
             <div style={{ width:1, height:18, background:"#CBD5E1" }} />
-            {TBtn(editMode, () => setEditMode(!editMode), editMode ? "✏️ Editing" : "✏️ Edit")}
             <button onClick={() => setSubPanelOpen(o => !o)}
               style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 11px", borderRadius:6, border:`1px solid ${subPanelOpen?"#f59e0b":"#E5EBF5"}`, background:subPanelOpen?"#fff7ed":"#fff", color:"#92400e", fontSize:11, fontWeight:500, cursor:"pointer" }}>
               🔄 Sub{activeSubCount > 0 ? ` (${activeSubCount})` : ""}
