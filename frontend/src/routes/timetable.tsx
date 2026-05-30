@@ -270,13 +270,15 @@ const DRAG_SAFE_BORDER  = "#10B981"  // filled safe  (2px solid)
 const DRAG_CONFLICT_BORDER = "#EF4444" // filled conflict (2px solid)
 
 function dragTdStyle(isTarget: boolean, hasConflict: boolean, hasFill: boolean): React.CSSProperties {
-  if (!isTarget) return { border:"1px solid #E8E4FF", padding:2 }
+  if (!isTarget) return { padding:2 }
   if (hasFill) {
-    // filled: outline only
-    return { border:`2px solid ${hasConflict ? DRAG_CONFLICT_BORDER : DRAG_SAFE_BORDER}`, padding:2, transition:"border 0.1s" }
+    // Filled cell → outline only. Use `outline` not `border` because tables use
+    // border-collapse:collapse which merges/overrides td borders.
+    const color = hasConflict ? DRAG_CONFLICT_BORDER : DRAG_SAFE_BORDER
+    return { padding:2, outline:`2.5px solid ${color}`, outlineOffset:"-2px", zIndex:1, position:"relative" as const }
   } else {
-    // blank: fill only
-    return { border:"1px solid #E8E4FF", padding:2, background: hasConflict ? DRAG_CONFLICT_FILL : DRAG_SAFE_FILL, transition:"background 0.1s" }
+    // Blank cell → fill only, no outline
+    return { padding:2, background: hasConflict ? DRAG_CONFLICT_FILL : DRAG_SAFE_FILL }
   }
 }
 
@@ -410,7 +412,7 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   // ── Multi-option / parallel group block ──────────────────
   if (options && options.length > 1) {
     return (
-      <td style={{ border: dragOver?"2px dashed #7C6FE0":"1px solid #E8E4FF", padding:2, position:"relative" as const }} onClick={onClick} {...sharedTdProps}>
+      <td style={{ ...dragTdStyle(!!isDropTarget, isConflict, true), position:"relative" as const }} onClick={onClick} {...sharedTdProps}>
         <div style={{ borderRadius:5, padding:"3px 5px", minHeight:44, background:"linear-gradient(135deg,#F5F2FF 0%,#FAFAFE 100%)", borderLeft:"3px solid #7C6FE0", border:"1px solid #D8D2FF", position:"relative" as const, cursor:onClick?"pointer":"default" }}>
           {absentHighlight && <span style={{ position:"absolute" as const, top:2, left:3, fontSize:8, color:"#D4920E" }}>⚠</span>}
           {options.map((opt, i) => {
