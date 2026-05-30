@@ -364,34 +364,31 @@ function DetailPanel({d,tf,onClose,onEdit}:{
 }
 
 // ─────────────────────────────────────────────
-// Single timeline block renderer
-// Soft-accent style: light background + coloured left border + black text
+// ─────────────────────────────────────────────
+// Single timeline block renderer — NO drag state props (prevents mass re-renders)
 // ─────────────────────────────────────────────
 function Block({
   block, left, width, rowH, compact, dayKey,
   showTeacherVal, showRoomVal, showTimeVal, shortNamesVal, viewMode,
-  staff, subjects, editMode, dragItem, dragOverCell,
-  onHover, onLeave, onClick, onEdit, onDelete, onDragStart, onDragOver, onDrop, onDragEnd,
+  staff, subjects, editMode, isSrcBlock,
+  onHover, onLeave, onClick, onEdit, onDelete, onDragStart, onDragEnd,
 }: {
   block:TimeBlock; left:number; width:number; rowH:number; compact:boolean; dayKey:string
   showTeacherVal:boolean; showRoomVal:boolean; showTimeVal:boolean; shortNamesVal:boolean
   viewMode:CalendarViewProps["viewMode"]
-  staff: Staff[]
-  subjects: Subject[]
+  staff: Staff[]; subjects: Subject[]
   editMode: boolean
-  dragItem: {section:string;day:string;periodId:string}|null
-  dragOverCell: {section:string;day:string;periodId:string}|null
+  isSrcBlock: boolean   // is THIS the block being dragged?
   onHover:(b:TimeBlock,e:React.MouseEvent)=>void
   onLeave:()=>void
   onClick:(b:TimeBlock)=>void
   onEdit?: (section:string,day:string,periodId:string)=>void
   onDelete?: (section:string,day:string,periodId:string)=>void
   onDragStart?: (e:React.DragEvent,section:string,day:string,periodId:string)=>void
-  onDragOver?: (e:React.DragEvent,section:string,day:string,periodId:string)=>void
-  onDrop?: (e:React.DragEvent,section:string,day:string,periodId:string)=>void
   onDragEnd?: ()=>void
 }) {
   if (width <= 0) return null
+  const [hovered, setHovered] = useState(false)
 
   // ── Break block ──────────────────────────────────────────────────────
   if (block.periodType !== "class") {
@@ -404,8 +401,7 @@ function Block({
           top:compact?2:3, bottom:compact?2:3, background:bs.bg,
           border:`1px solid ${bs.border}`, borderRadius:4,
           display:"flex", flexDirection:"column" as const,
-          alignItems:"center", justifyContent:"center", overflow:"hidden",
-          cursor:"pointer",
+          alignItems:"center", justifyContent:"center", overflow:"hidden", cursor:"pointer",
         }}>
         {width >= 22 && (
           <div style={{ fontSize:Math.min(compact?7:8.5, width/4), fontWeight:700, color:bs.text,
@@ -433,104 +429,70 @@ function Block({
     )
   }
 
-  // ── Subject block — soft accent style ────────────────────────────────
+  // ── Subject block ────────────────────────────────────────────────────
   const col     = subjectColor(block.subject)
   const subDisp = shortNamesVal ? getSubjectShortName(block.subject, subjects) : block.subject
   const tchDisp = block.teacher ? (shortNamesVal ? getStaffShortName(block.teacher, staff) : block.teacher) : ""
-  const rmDisp  = block.room    ? (shortNamesVal ? shortRoom(block.room)      : block.room)    : ""
+  const rmDisp  = block.room    ? (shortNamesVal ? shortRoom(block.room) : block.room) : ""
   const secDisp = block.sectionName ? (shortNamesVal ? shortRoom(block.sectionName) : block.sectionName) : ""
 
-  const showTch  = showTeacherVal && width >= 58 && !!tchDisp
-  const showRm   = showRoomVal    && width >= 80 && !!rmDisp && viewMode!=="room"
-  const showSec  = viewMode!=="class" && width >= 60 && !!secDisp
-  const showTm   = showTimeVal    && width >= 70
-  const fsSub    = compact ? (width<22?0:8) : (width<28?0:width<55?9.5:11)
-  const fsMeta   = compact ? 7 : 9.5
-
-  // ── FIXED: highlight ALL class-period cells (not just empty ones) during drag
-  const isDraggingThis = dragItem?.section === block.sectionName && dragItem?.day === dayKey && dragItem?.periodId === block.periodId
-  const isDragOverThis = dragOverCell?.section === block.sectionName && dragOverCell?.day === dayKey && dragOverCell?.periodId === block.periodId
-  const isClassPeriod  = block.periodType === "class"
-  const isDroppable    = !!dragItem && editMode && isClassPeriod && !isDraggingThis
-  const [hovered, setHovered] = useState(false)
-
-  // Background & border during drag
-  const bgColor    = isDraggingThis ? "rgba(124,111,224,0.25)"
-                   : isDragOverThis ? "rgba(124,111,224,0.22)"
-                   : isDroppable    ? "rgba(209,213,255,0.55)"
-                   : col.bg
-  const leftBorder = isDraggingThis ? "#7C6FE0"
-                   : isDragOverThis ? "#4F46E5"
-                   : isDroppable    ? "#818CF8"
-                   : col.accent
-  const outlineStyle = isDragOverThis ? "2px solid #4F46E5"
-                     : isDroppable    ? "1.5px dashed #818CF8"
-                     : block.absent  ? "2px solid #F59E0B"
-                     : block.isSub   ? "1.5px dashed #F59E0B"
-                     : "none"
+  const showTch = showTeacherVal && width >= 58 && !!tchDisp
+  const showRm  = showRoomVal    && width >= 80 && !!rmDisp && viewMode!=="room"
+  const showSec = viewMode!=="class" && width >= 60 && !!secDisp
+  const showTm  = showTimeVal    && width >= 70
+  const fsSub   = compact ? (width<22?0:8) : (width<28?0:width<55?9.5:11)
+  const fsMeta  = compact ? 7 : 9.5
 
   return (
     <div
-      draggable={editMode && !!onDragStart && !!block.subject}
-      onMouseEnter={e=>{if(!dragItem){setHovered(true); onHover(block,e)}}}
+      draggable={editMode && !!block.subject}
+      onMouseEnter={e=>{setHovered(true); onHover(block,e)}}
       onMouseLeave={()=>{setHovered(false); onLeave()}}
       onDragStart={e=>{setHovered(false); onDragStart?.(e, block.sectionName, dayKey, block.periodId)}}
       onDragEnd={()=>onDragEnd?.()}
-      onDragOver={e=>{e.preventDefault(); onDragOver?.(e, block.sectionName, dayKey, block.periodId)}}
-      onDragEnter={e=>e.preventDefault()}
-      onDrop={e=>{e.preventDefault(); e.stopPropagation(); onDrop?.(e, block.sectionName, dayKey, block.periodId)}}
       onDoubleClick={()=>onEdit?.(block.sectionName, dayKey, block.periodId)}
-      onClick={()=>{ if(!dragItem) onClick(block) }}
+      onClick={()=>onClick(block)}
       style={{
         position:"absolute" as const,
-        left: left+1, width: Math.max(width-2, 2),
-        top: compact?2:3, bottom: compact?2:3,
-        background: bgColor,
-        borderLeft: `3px solid ${leftBorder}`,
-        borderRadius: "0 5px 5px 0",
+        left:left+1, width:Math.max(width-2,2),
+        top:compact?2:3, bottom:compact?2:3,
+        background: col.bg,
+        borderLeft: `3px solid ${col.accent}`,
+        borderRadius:"0 5px 5px 0",
         overflow:"hidden",
-        cursor: editMode && !!block.subject && !isDraggingThis ? "grab" : "default",
-        padding: width<26?"1px 2px": compact?"2px 5px":"3px 7px",
+        cursor: editMode && !!block.subject ? "grab" : "pointer",
+        padding: width<26?"1px 2px":compact?"2px 5px":"3px 7px",
         display:"flex", flexDirection:"column" as const, justifyContent:"center",
-        outline: outlineStyle,
+        outline: block.absent?"2px solid #F59E0B":block.isSub?"1.5px dashed #F59E0B":"none",
         userSelect:"none" as const,
-        boxShadow: isDraggingThis ? "0 6px 14px rgba(124,111,224,0.3)"
-                 : isDragOverThis ? "0 4px 12px rgba(79,70,229,0.35)"
-                 : isDroppable    ? "0 0 0 1px rgba(129,140,248,0.3)"
-                 : "0 1px 3px rgba(0,0,0,0.06)",
-        transition: "background 0.1s, box-shadow 0.1s, outline 0.1s",
-        opacity: isDraggingThis ? 0.55 : 1,
-        transform: isDragOverThis ? "scale(1.01)" : "none",
+        boxShadow:"0 1px 3px rgba(0,0,0,0.06)",
+        opacity: isSrcBlock ? 0.4 : 1,
+        transition:"opacity 0.1s",
       }}>
-      {/* Subject name */}
       {fsSub > 0 && (
-        <div style={{
-          fontSize:fsSub, fontWeight:700, lineHeight:1.2, color: col.accent,
-          overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const,
-        }}>{subDisp}</div>
+        <div style={{ fontSize:fsSub, fontWeight:700, lineHeight:1.2, color:col.accent,
+          overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>
+          {subDisp}
+        </div>
       )}
-      {/* Section (teacher/room views) */}
       {showSec && (
         <div style={{ fontSize:fsMeta, fontWeight:700, color:"#374151", marginTop:1,
           overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>
           {secDisp}
         </div>
       )}
-      {/* Teacher */}
       {showTch && (
         <div style={{ fontSize:fsMeta, color:"#555", marginTop:1,
           overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>
           {block.isSub?"🔄 ":block.isClassTeacher?"★ ":""}{tchDisp}
         </div>
       )}
-      {/* Room */}
       {showRm && (
         <div style={{ fontSize:fsMeta-0.5, color:"#777", marginTop:1, fontFamily:"monospace",
           overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>
           {rmDisp}
         </div>
       )}
-      {/* Time */}
       {showTm && (
         <div style={{ fontSize:fsMeta-0.5, color:"#888", marginTop:1, fontFamily:"monospace",
           whiteSpace:"nowrap" as const }}>
@@ -541,61 +503,84 @@ function Block({
         <span style={{ position:"absolute" as const, top:3, right:4,
           width:5, height:5, borderRadius:"50%", background:"#F59E0B" }} />
       )}
-
-      {/* ── 4-way drag handle — shown on hover of draggable cells in edit mode ── */}
-      {editMode && !!block.subject && !isDraggingThis && hovered && !dragItem && (
-        <div
-          style={{
-            position:"absolute" as const, top:"50%", right:4,
-            transform:"translateY(-50%)",
-            width:18, height:18, borderRadius:3,
-            background:"rgba(100,116,139,0.18)", border:"1px solid rgba(100,116,139,0.35)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            cursor:"grab", zIndex:10, pointerEvents:"none",
-            color:"#475569", lineHeight:1,
-          }}
-          title="Drag to swap"
-        >
-          {/* SVG 4-way move icon (matches Word table handle) */}
+      {/* 4-way drag handle — on hover, edit mode only */}
+      {editMode && hovered && (
+        <div style={{
+          position:"absolute" as const, top:"50%", right:4,
+          transform:"translateY(-50%)",
+          width:16, height:16, borderRadius:3,
+          background:"rgba(100,116,139,0.2)", border:"1px solid rgba(100,116,139,0.4)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          pointerEvents:"none", color:"#475569", zIndex:8,
+        }}>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <path d="M5 0 L4 2 L6 2 Z"/>
-            <path d="M5 10 L4 8 L6 8 Z"/>
-            <path d="M0 5 L2 4 L2 6 Z"/>
-            <path d="M10 5 L8 4 L8 6 Z"/>
-            <circle cx="5" cy="5" r="1"/>
+            <path d="M5 0.5 L3.5 2.5 L6.5 2.5 Z"/>
+            <path d="M5 9.5 L3.5 7.5 L6.5 7.5 Z"/>
+            <path d="M0.5 5 L2.5 3.5 L2.5 6.5 Z"/>
+            <path d="M9.5 5 L7.5 3.5 L7.5 6.5 Z"/>
+            <rect x="4" y="4" width="2" height="2" rx="1"/>
           </svg>
         </div>
       )}
-
-      {/* ── Green + circle — shown on ALL droppable cells when a drag is active ── */}
-      {isDroppable && (
-        <div
-          style={{
-            position:"absolute" as const, bottom:4, right:4,
-            width:22, height:22, borderRadius:"50%",
-            background:"#16A34A", border:"2px solid #fff",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            pointerEvents:"none", zIndex:10,
-            fontSize:14, color:"#fff", fontWeight:300, lineHeight:1,
-            boxShadow:"0 2px 6px rgba(22,163,74,0.5)",
-            animation: isDragOverThis ? "none" : "pulse 1.2s ease-in-out infinite",
-          }}
-        >+</div>
-      )}
-
-      {/* Delete button — hover in edit mode (only when not dragging) */}
-      {editMode && hovered && onDelete && !!block.subject && !dragItem && (
-        <button
-          onClick={e=>{e.stopPropagation(); onDelete(block.sectionName, dayKey, block.periodId)}}
-          style={{
-            position:"absolute" as const, top:2, right:2, width:16, height:16,
+      {/* Delete button */}
+      {editMode && hovered && onDelete && (
+        <button onClick={e=>{e.stopPropagation(); onDelete(block.sectionName, dayKey, block.periodId)}}
+          style={{ position:"absolute" as const, top:2, right:2, width:15, height:15,
             borderRadius:"50%", background:"#ef4444", color:"#fff", border:"none",
-            fontSize:10, fontWeight:700, cursor:"pointer", display:"flex",
+            fontSize:9, fontWeight:700, cursor:"pointer", display:"flex",
             alignItems:"center", justifyContent:"center", lineHeight:1, zIndex:11,
-          }}
-          title="Delete cell"
-        >×</button>
+          }} title="Delete">×</button>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// Drop zone overlay — rendered on top of blocks ONLY during active drag
+// Handles highlighting + drop events without re-rendering Block components
+// ─────────────────────────────────────────────
+function DropZone({
+  block, left, width, rowH, compact, dayKey, isOver,
+  onDragOver, onDragLeave, onDrop,
+}: {
+  block:TimeBlock; left:number; width:number; rowH:number; compact:boolean; dayKey:string
+  isOver:boolean
+  onDragOver:(sec:string,day:string,pid:string)=>void
+  onDragLeave:()=>void
+  onDrop:(sec:string,day:string,pid:string)=>void
+}) {
+  if (width <= 0 || block.periodType !== "class") return null
+  return (
+    <div
+      onDragOver={e=>{e.preventDefault(); e.stopPropagation(); onDragOver(block.sectionName, dayKey, block.periodId)}}
+      onDragEnter={e=>{e.preventDefault(); e.stopPropagation()}}
+      onDragLeave={onDragLeave}
+      onDrop={e=>{e.preventDefault(); e.stopPropagation(); onDrop(block.sectionName, dayKey, block.periodId)}}
+      style={{
+        position:"absolute" as const,
+        left:left+1, width:Math.max(width-2,2),
+        top:compact?2:3, bottom:compact?2:3,
+        borderRadius:"0 5px 5px 0",
+        zIndex:20,
+        background: isOver ? "rgba(99,102,241,0.18)" : "rgba(165,180,252,0.15)",
+        border: isOver ? "2px solid #6366F1" : "2px dashed #818CF8",
+        boxShadow: isOver ? "0 0 0 3px rgba(99,102,241,0.2)" : "none",
+        transition:"all 0.08s ease",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        cursor:"copy",
+      }}>
+      {/* Green + drop icon */}
+      <div style={{
+        width:24, height:24, borderRadius:"50%",
+        background: isOver ? "#16A34A" : "#22C55E",
+        border:"2.5px solid #fff",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        fontSize:16, color:"#fff", fontWeight:400, lineHeight:1,
+        boxShadow:`0 2px 8px rgba(22,163,74,${isOver?0.6:0.4})`,
+        transform: isOver ? "scale(1.15)" : "scale(1)",
+        transition:"all 0.08s ease",
+        pointerEvents:"none",
+      }}>+</div>
     </div>
   )
 }
@@ -616,18 +601,25 @@ export function CalendarView({
   const [curDate,    setCurDate]    = useState(new Date())
   const [tooltip,    setTooltip]    = useState<{lines:string[];x:number;y:number}|null>(null)
   const [activeD,    setActiveD]    = useState<ActiveDetail|null>(null)
-  const [dragItem,   setDragItem]   = useState<{section:string;day:string;periodId:string}|null>(null)
-  const [dragOverCell, setDragOverCell] = useState<{section:string;day:string;periodId:string}|null>(null)
+  // drag state: only src key + hover key — lightweight strings, not objects
+  const [dragSrcKey,  setDragSrcKey]  = useState<string|null>(null)  // block.key being dragged
+  const [dragSrc,     setDragSrc]     = useState<{section:string;day:string;periodId:string}|null>(null)
+  const [dragOverKey, setDragOverKey] = useState<string|null>(null)  // key of hovered drop zone
+  const [dragOverDst, setDragOverDst] = useState<{section:string;day:string;periodId:string}|null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout>|null>(null)
 
-  // Clear drag state on any dragend / escape — prevents stale highlights
-  useEffect(()=>{
-    const clear = () => { setDragItem(null); setDragOverCell(null) }
-    const onKey = (e:KeyboardEvent) => { if(e.key==="Escape") clear() }
-    document.addEventListener("dragend", clear)
-    document.addEventListener("keydown", onKey)
-    return () => { document.removeEventListener("dragend", clear); document.removeEventListener("keydown", onKey) }
+  const clearDrag = useCallback(()=>{
+    setDragSrcKey(null); setDragSrc(null)
+    setDragOverKey(null); setDragOverDst(null)
+    setTooltip(null)
   },[])
+
+  useEffect(()=>{
+    const onKey = (e:KeyboardEvent) => { if(e.key==="Escape") clearDrag() }
+    document.addEventListener("dragend", clearDrag)
+    document.addEventListener("keydown", onKey)
+    return ()=>{ document.removeEventListener("dragend", clearDrag); document.removeEventListener("keydown", onKey) }
+  },[clearDrag])
 
   const dayStartMin = useMemo(()=>parseTime(startTime),[startTime])
 
@@ -884,35 +876,54 @@ export function CalendarView({
           pointerEvents:"none" as const,
         }} />
       ))}
-      {/* Blocks */}
-      {blocks.map(b=>(
-        <Block key={b.key} block={b}
-          dayKey={dayKey}
-          left={(b.startMin-dayStartMin)*pxPerMin}
-          width={(b.endMin-b.startMin)*pxPerMin}
-          rowH={rowH} compact={compact}
-          showTeacherVal={showTeacher} showRoomVal={showRoom}
-          showTimeVal={showTime} shortNamesVal={shortNames}
-          viewMode={viewMode}
-          staff={staff} subjects={subjects}
-          editMode={editMode}
-          dragItem={dragItem}
-          dragOverCell={dragOverCell}
-          onHover={(bl,e)=>onHover(bl,e,dayKey)} onLeave={onLeave} onClick={bl=>onClick(bl,dayKey)}
-          onEdit={onCellEdit ? (sec,d,p)=>onCellEdit(sec,d,p) : undefined}
-          onDelete={onCellDelete ? (sec,d,p)=>onCellDelete(sec,d,p) : undefined}
-          onDragStart={(e,sec,d,p)=>{setTooltip(null); setDragItem({section:sec,day:d,periodId:p})}}
-          onDragOver={(e,sec,d,p)=>{setDragOverCell({section:sec,day:d,periodId:p})}}
-          onDragEnd={()=>{setDragItem(null); setDragOverCell(null)}}
-          onDrop={(e,sec,d,p)=>{
-            if (dragItem && onCellSwap && (dragItem.section !== sec || dragItem.day !== d || dragItem.periodId !== p)) {
-              onCellSwap(dragItem, {section: sec, day: d, periodId: p})
-            }
-            setDragItem(null)
-            setDragOverCell(null)
-          }}
-        />
-      ))}
+      {/* Blocks — no drag state props, no mass re-renders */}
+      {blocks.map(b=>{
+        const bLeft  = (b.startMin-dayStartMin)*pxPerMin
+        const bWidth = (b.endMin-b.startMin)*pxPerMin
+        return (
+          <Block key={b.key} block={b}
+            dayKey={dayKey}
+            left={bLeft} width={bWidth}
+            rowH={rowH} compact={compact}
+            showTeacherVal={showTeacher} showRoomVal={showRoom}
+            showTimeVal={showTime} shortNamesVal={shortNames}
+            viewMode={viewMode} staff={staff} subjects={subjects}
+            editMode={editMode}
+            isSrcBlock={dragSrcKey === b.key}
+            onHover={(bl,e)=>onHover(bl,e,dayKey)} onLeave={onLeave} onClick={bl=>onClick(bl,dayKey)}
+            onEdit={onCellEdit}
+            onDelete={onCellDelete ? (sec,d,p)=>onCellDelete(sec,d,p) : undefined}
+            onDragStart={(_e,sec,d,p)=>{
+              setTooltip(null)
+              setDragSrcKey(b.key)
+              setDragSrc({section:sec,day:d,periodId:p})
+            }}
+            onDragEnd={clearDrag}
+          />
+        )
+      })}
+      {/* Drop zone overlay — ONLY rendered when a drag is active, on top of blocks */}
+      {dragSrc && blocks.map(b=>{
+        if (b.periodType!=="class") return null
+        if (b.key === dragSrcKey) return null        // skip source cell
+        const bLeft  = (b.startMin-dayStartMin)*pxPerMin
+        const bWidth = (b.endMin-b.startMin)*pxPerMin
+        const isOver = dragOverKey === b.key
+        return (
+          <DropZone key={`dz-${b.key}`} block={b}
+            dayKey={dayKey} left={bLeft} width={bWidth} rowH={rowH} compact={compact}
+            isOver={isOver}
+            onDragOver={(sec,d,p)=>{ setDragOverKey(b.key); setDragOverDst({section:sec,day:d,periodId:p}) }}
+            onDragLeave={()=>{ if(dragOverKey===b.key){ setDragOverKey(null); setDragOverDst(null) } }}
+            onDrop={(sec,d,p)=>{
+              if(dragSrc && onCellSwap && (dragSrc.section!==sec||dragSrc.day!==d||dragSrc.periodId!==p)) {
+                onCellSwap(dragSrc, {section:sec, day:d, periodId:p})
+              }
+              clearDrag()
+            }}
+          />
+        )
+      })}
     </div>
   )
 
