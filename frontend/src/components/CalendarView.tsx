@@ -460,7 +460,7 @@ function Block({
         borderLeft: `3px solid ${col.accent}`,
         borderRadius:"0 5px 5px 0",
         overflow:"hidden",
-        cursor: editMode && !!block.subject ? "grab" : "pointer",
+        cursor: editMode && !!block.subject ? (isSrcBlock ? "grabbing" : "grab") : "pointer",
         padding: width<26?"1px 2px":compact?"2px 5px":"3px 7px",
         display:"flex", flexDirection:"column" as const, justifyContent:"center",
         outline: block.absent?"2px solid #F59E0B":block.isSub?"1.5px dashed #F59E0B":"none",
@@ -503,25 +503,7 @@ function Block({
         <span style={{ position:"absolute" as const, top:3, right:4,
           width:5, height:5, borderRadius:"50%", background:"#F59E0B" }} />
       )}
-      {/* 4-way drag handle — on hover, edit mode only */}
-      {editMode && hovered && (
-        <div style={{
-          position:"absolute" as const, top:"50%", right:4,
-          transform:"translateY(-50%)",
-          width:16, height:16, borderRadius:3,
-          background:"rgba(100,116,139,0.2)", border:"1px solid rgba(100,116,139,0.4)",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          pointerEvents:"none", color:"#475569", zIndex:8,
-        }}>
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <path d="M5 0.5 L3.5 2.5 L6.5 2.5 Z"/>
-            <path d="M5 9.5 L3.5 7.5 L6.5 7.5 Z"/>
-            <path d="M0.5 5 L2.5 3.5 L2.5 6.5 Z"/>
-            <path d="M9.5 5 L7.5 3.5 L7.5 6.5 Z"/>
-            <rect x="4" y="4" width="2" height="2" rx="1"/>
-          </svg>
-        </div>
-      )}
+      {/* No icon — cursor handles the UX */}
       {/* Delete button */}
       {editMode && hovered && onDelete && (
         <button onClick={e=>{e.stopPropagation(); onDelete(block.sectionName, dayKey, block.periodId)}}
@@ -562,26 +544,12 @@ function DropZone({
         top:compact?2:3, bottom:compact?2:3,
         borderRadius:"0 5px 5px 0",
         zIndex:20,
-        background: isOver ? "rgba(99,102,241,0.18)" : "rgba(165,180,252,0.15)",
-        border: isOver ? "2px solid #6366F1" : "2px dashed #818CF8",
-        boxShadow: isOver ? "0 0 0 3px rgba(99,102,241,0.2)" : "none",
+        background: isOver ? "rgba(99,102,241,0.22)" : "rgba(165,180,252,0.12)",
+        border: isOver ? "2px solid #6366F1" : "1.5px dashed #818CF8",
+        boxShadow: isOver ? "inset 0 0 0 1px #6366F1" : "none",
         transition:"all 0.08s ease",
-        display:"flex", alignItems:"center", justifyContent:"center",
         cursor:"copy",
-      }}>
-      {/* Green + drop icon */}
-      <div style={{
-        width:24, height:24, borderRadius:"50%",
-        background: isOver ? "#16A34A" : "#22C55E",
-        border:"2.5px solid #fff",
-        display:"flex", alignItems:"center", justifyContent:"center",
-        fontSize:16, color:"#fff", fontWeight:400, lineHeight:1,
-        boxShadow:`0 2px 8px rgba(22,163,74,${isOver?0.6:0.4})`,
-        transform: isOver ? "scale(1.15)" : "scale(1)",
-        transition:"all 0.08s ease",
-        pointerEvents:"none",
-      }}>+</div>
-    </div>
+      }} />
   )
 }
 
