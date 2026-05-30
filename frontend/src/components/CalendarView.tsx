@@ -538,7 +538,7 @@ export function CalendarView({
   classTT, periods, workDays, startTime, timeFormat="12h",
   staff, sections, subjects, substitutions, viewMode, selectedEntity,
   showTeacher, showRoom, showTime=false, shortNames=false, editMode=false,
-  onCellClick, onCellEdit, onCellDelete, absentHighlights, classwiseBreaks,
+  onCellClick, onCellEdit, onCellDelete, onCellSwap, absentHighlights, classwiseBreaks,
 }: CalendarViewProps) {
 
   // ── State ────────────────────────────────────────────────────────────

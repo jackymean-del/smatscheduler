@@ -358,7 +358,7 @@ export function TeachersGrid({
       onBulkScope={onBulkScope}
       newRow={() => ({
         id: makeId(), name: `Teacher ${staff.length + 1}`,
-        role: 'Teacher', subjects: [], classes: [],
+        shortName: '', role: 'Teacher', subjects: [], classes: [],
         isClassTeacher: '', maxPeriodsPerWeek: 30,
       } as Staff)}
       toolbar={{ add: true, importCSV: true, exportCSV: true, paste: true, search: true, transpose: true, bulkActions: true }}

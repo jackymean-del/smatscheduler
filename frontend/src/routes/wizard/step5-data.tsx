@@ -314,7 +314,7 @@ export function Step5Data() {
           </table>
           <button style={addRow} onClick={() => {
             const num = staff.length + 1
-            setStaff([...staff, { id:crypto.randomUUID(), name:`${org.staffLabel} ${num}`, role:org.staffLabel, subjects:[], classes:[], isClassTeacher:"", maxPeriodsPerWeek:country.maxPeriodsWeek }])
+            setStaff([...staff, { id:crypto.randomUUID(), name:`${org.staffLabel} ${num}`, shortName:"", role:org.staffLabel, subjects:[], classes:[], isClassTeacher:"", maxPeriodsPerWeek:country.maxPeriodsWeek }])
           }}>
             ＋ Add {org.staffLabel} (auto-named "{org.staffLabel} {staff.length + 1}")
           </button>
