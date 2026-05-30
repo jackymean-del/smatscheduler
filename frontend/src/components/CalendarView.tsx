@@ -566,9 +566,11 @@ function getSwapConflict(
   classTT: ClassTimetable,
   srcSection: string, srcDay: string, srcPeriodId: string,
   tgtDay: string, tgtPeriodId: string,
+  tgtSection?: string,   // optional: for cross-section swaps (teacher/room/subject view)
 ): string | null {
-  const srcCell = classTT[srcSection]?.[srcDay]?.[srcPeriodId]
-  const tgtCell = classTT[srcSection]?.[tgtDay]?.[tgtPeriodId]
+  const effectiveTgtSection = tgtSection ?? srcSection
+  const srcCell    = classTT[srcSection]?.[srcDay]?.[srcPeriodId]
+  const tgtCell    = classTT[effectiveTgtSection]?.[tgtDay]?.[tgtPeriodId]
   const srcTeacher = srcCell?.teacher?.trim()
   const tgtTeacher = tgtCell?.teacher?.trim()
   const msgs: string[] = []
@@ -580,24 +582,36 @@ function getSwapConflict(
   }
   // Class-teacher protection: target cell is a class-teacher assignment
   if (tgtCell?.isClassTeacher && srcTeacher && srcTeacher !== tgtTeacher) {
-    msgs.push(`${tgtTeacher} is the Class Teacher for ${srcSection}.\nCannot swap into a Class Teacher's designated period.`)
+    msgs.push(`${tgtTeacher} is the Class Teacher for ${effectiveTgtSection}.\nCannot swap into a Class Teacher's designated period.`)
     return msgs.join('\n')
   }
 
-  // After swap: srcTeacher will occupy (tgtDay, tgtPeriodId) → clash with another section?
+  // After swap: srcTeacher will occupy (tgtDay, tgtPeriodId) → clash elsewhere?
   if (srcTeacher) {
     const clash = Object.entries(classTT).find(([sec, days]) =>
-      sec !== srcSection && days[tgtDay]?.[tgtPeriodId]?.teacher === srcTeacher
+      sec !== srcSection && sec !== effectiveTgtSection &&
+      days[tgtDay]?.[tgtPeriodId]?.teacher === srcTeacher
     )
     if (clash) msgs.push(`${srcTeacher} is already teaching ${clash[0]} at this time slot.`)
   }
 
-  // After swap: tgtTeacher will occupy (srcDay, srcPeriodId) → clash with another section?
-  if (tgtTeacher) {
+  // After swap: tgtTeacher will occupy (srcDay, srcPeriodId) → clash elsewhere?
+  if (tgtTeacher && tgtTeacher !== srcTeacher) {
     const clash = Object.entries(classTT).find(([sec, days]) =>
-      sec !== srcSection && days[srcDay]?.[srcPeriodId]?.teacher === tgtTeacher
+      sec !== srcSection && sec !== effectiveTgtSection &&
+      days[srcDay]?.[srcPeriodId]?.teacher === tgtTeacher
     )
     if (clash) msgs.push(`${tgtTeacher} is already teaching ${clash[0]} in the original time slot.`)
+  }
+
+  // Cross-section: check if target section already has someone else in source slot
+  if (tgtSection && tgtSection !== srcSection) {
+    const tgtInSrcSlot = classTT[tgtSection]?.[srcDay]?.[srcPeriodId]
+    if (tgtInSrcSlot?.teacher && tgtInSrcSlot.teacher !== srcTeacher)
+      msgs.push(`${tgtSection} already has ${tgtInSrcSlot.teacher} in the source time slot.`)
+    const srcInTgtSlot = classTT[srcSection]?.[tgtDay]?.[tgtPeriodId]
+    if (srcInTgtSlot?.teacher && srcInTgtSlot.teacher !== tgtTeacher)
+      msgs.push(`${srcSection} already has ${srcInTgtSlot.teacher} in this time slot.`)
   }
 
   return msgs.length ? msgs.join('\n') : null
@@ -977,29 +991,51 @@ export function CalendarView({
           />
         )
       })}
-      {/* Drop zone overlay — ONLY rendered when a drag is active, same section only */}
+      {/* Drop zone overlay — ONLY rendered during drag, scope depends on viewMode */}
       {dragSrc && blocks.map(b=>{
         if (b.periodType!=="class") return null
-        if (b.key === dragSrcKey) return null                  // skip source cell
-        if (b.sectionName !== dragSrc.section) return null     // same section only
+        if (b.key === dragSrcKey) return null   // skip the source cell itself
+
+        // ── Filter by viewMode so the right cells get highlighted ──
+        const srcCell   = classTT[dragSrc.section]?.[dragSrc.day]?.[dragSrc.periodId]
+        const srcTeacher = srcCell?.teacher
+        const srcRoom    = srcCell?.room
+        const srcSubject = srcCell?.subject
+        if (viewMode === "class") {
+          // Class view: only same section
+          if (b.sectionName !== dragSrc.section) return null
+        } else if (viewMode === "teacher") {
+          // Teacher view: all blocks taught by the same teacher
+          if (!srcTeacher || b.teacher !== srcTeacher) return null
+        } else if (viewMode === "room") {
+          // Room view: all blocks using the same room
+          if (!srcRoom || b.room !== srcRoom) return null
+        } else if (viewMode === "subject") {
+          // Subject view: all blocks with the same subject
+          if (!srcSubject || b.subject !== srcSubject) return null
+        }
+
         const bLeft   = (b.startMin-dayStartMin)*pxPerMin
         const bWidth  = (b.endMin-b.startMin)*pxPerMin
         const isOver  = dragOverKey === b.key
+
+        // Conflict check — works for both same-section and cross-section swaps
         const conflict = getSwapConflict(
           classTT,
           dragSrc.section, dragSrc.day, dragSrc.periodId,
           dayKey, b.periodId,
+          b.sectionName,   // pass target section for cross-section conflict detection
         )
         return (
           <DropZone key={`dz-${b.key}`} block={b}
             dayKey={dayKey} left={bLeft} width={bWidth} rowH={rowH} compact={compact}
             isOver={isOver} conflict={conflict}
-            onDragOver={(sec,d,p)=>{ setDragOverKey(b.key); setDragOverDst({section:sec,day:d,periodId:p}) }}
+            onDragOver={(_sec,_d,_p)=>{ setDragOverKey(b.key); setDragOverDst({section:b.sectionName,day:dayKey,periodId:b.periodId}) }}
             onDragLeave={()=>{ if(dragOverKey===b.key){ setDragOverKey(null); setDragOverDst(null) } }}
             onConflictDrop={(reason)=>{ clearDrag(); setConflictWarning(reason) }}
-            onDrop={(sec,d,p)=>{
-              if(dragSrc && onCellSwap && (dragSrc.section!==sec||dragSrc.day!==d||dragSrc.periodId!==p)) {
-                onCellSwap(dragSrc, {section:sec, day:d, periodId:p})
+            onDrop={(_sec,_d,_p)=>{
+              if(dragSrc && onCellSwap) {
+                onCellSwap(dragSrc, {section:b.sectionName, day:dayKey, periodId:b.periodId})
               }
               clearDrag()
             }}
