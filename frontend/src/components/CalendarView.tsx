@@ -720,6 +720,27 @@ export function CalendarView({
     return [...s].sort()
   },[sections,classTT])
 
+  // ── Full-break detection (header/break rule) ─────────────────────────
+  // A break is "full" (show as a solid break block in teacher/room/subject
+  // views) only when ALL classes are on it simultaneously. Partial/classwise
+  // breaks are NOT shown as break blocks — during that time the in-session
+  // classes' teaching blocks fill the slot instead.
+  const allClassKeys = useMemo(()=>new Set(sections.map(s=>secKey(s.name))),[sections])
+  const isFullBreak = useCallback((pid:string):boolean=>{
+    if(!classwiseBreaks?.length) return true          // no classwise config → all full
+    const cb=classwiseBreaks.find(b=>b.id===pid)
+    if(!cb) return true                                // assembly/dispersal/global → full
+    if(cb.classes.length===0) return true              // explicitly all classes
+    return [...allClassKeys].every(k=>cb.classes.includes(k))
+  },[classwiseBreaks,allClassKeys])
+  // Representative-section times: full breaks positioned at real wall-clock time
+  // (avoids the global-clock inflation from accumulated staggered breaks)
+  const repSecTimes = useCallback((dayKey:string)=>{
+    const repSec=sections[0]?.name
+    if(!repSec) return calcTimes(periods,dayStartMin)
+    return calcTimes(buildSecPeriods(repSec,periods,classwiseBreaks),dayStartMin)
+  },[sections,periods,classwiseBreaks,dayStartMin])
+
   // ── Block builders ───────────────────────────────────────────────────
   const buildClassBlocks = useCallback((secName:string, dayKey:string): TimeBlock[] => {
     const ps=buildSecPeriods(secName,periods,classwiseBreaks)
@@ -745,10 +766,13 @@ export function CalendarView({
   const buildTeacherBlocks = useCallback((tName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
     const gTm=calcTimes(periods,dayStartMin)
-    // Global breaks
+    const rTm=repSecTimes(dayKey)
+    // Global breaks — only FULL (school-wide) breaks render as solid blocks.
+    // Partial/classwise breaks are skipped; in-session teaching blocks fill them.
     periods.forEach(p=>{
       if(p.type==="class") return
-      const t=gTm.get(p.id)!
+      if(!isFullBreak(p.id)) return
+      const t=rTm.get(p.id)??gTm.get(p.id)!
       blocks.push({
         key:`__brk|${p.id}|${dayKey}`, periodId:p.id, periodName:p.name, periodType:p.type,
         startMin:t.start, endMin:t.end, sectionName:"",
@@ -796,15 +820,17 @@ export function CalendarView({
       })
     })
     return blocks.sort((a,b)=>a.startMin-b.startMin)
-  },[classTT,periods,classwiseBreaks,sections,substitutions,absentHighlights,dayStartMin])
+  },[classTT,periods,classwiseBreaks,sections,substitutions,absentHighlights,dayStartMin,isFullBreak,repSecTimes])
 
   const buildRoomBlocks = useCallback((roomName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
     const gTm=calcTimes(periods,dayStartMin)
-    // Global breaks
+    const rTm=repSecTimes(dayKey)
+    // Global breaks — only FULL (school-wide) breaks render as solid blocks.
     periods.forEach(p=>{
       if(p.type==="class") return
-      const t=gTm.get(p.id)!
+      if(!isFullBreak(p.id)) return
+      const t=rTm.get(p.id)??gTm.get(p.id)!
       blocks.push({
         key:`__brk|${p.id}|${dayKey}`, periodId:p.id, periodName:p.name, periodType:p.type,
         startMin:t.start, endMin:t.end, sectionName:"",
@@ -851,15 +877,17 @@ export function CalendarView({
       })
     })
     return blocks.sort((a,b)=>a.startMin-b.startMin)
-  },[classTT,periods,classwiseBreaks,sections,substitutions,dayStartMin])
+  },[classTT,periods,classwiseBreaks,sections,substitutions,dayStartMin,isFullBreak,repSecTimes])
 
   const buildSubjectBlocks = useCallback((subjectName:string, dayKey:string): TimeBlock[] => {
     const blocks:TimeBlock[]=[]
     const gTm=calcTimes(periods,dayStartMin)
-    // Global breaks
+    const rTm=repSecTimes(dayKey)
+    // Global breaks — only FULL (school-wide) breaks render as solid blocks.
     periods.forEach(p=>{
       if(p.type==="class") return
-      const t=gTm.get(p.id)!
+      if(!isFullBreak(p.id)) return
+      const t=rTm.get(p.id)??gTm.get(p.id)!
       blocks.push({
         key:`__brk|${p.id}|${dayKey}`, periodId:p.id, periodName:p.name, periodType:p.type,
         startMin:t.start, endMin:t.end, sectionName:"",
@@ -890,7 +918,7 @@ export function CalendarView({
       })
     })
     return blocks.sort((a,b)=>a.startMin-b.startMin)
-  },[classTT,periods,classwiseBreaks,sections,substitutions,dayStartMin])
+  },[classTT,periods,classwiseBreaks,sections,substitutions,dayStartMin,isFullBreak,repSecTimes])
 
   // ── Get blocks for entity × day ──────────────────────────────────────
   const getEntityBlocks = useCallback((entityId:string, dayKey:string): TimeBlock[] => {

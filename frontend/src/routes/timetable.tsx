@@ -271,6 +271,27 @@ function LunchCell({ id, secName }: { id: string; secName?: string }) {
   )
 }
 
+// ── Header rule helper: for a partial-break period, return the concurrent class
+//    period so the column shows a PERIOD NAME (not a break name).
+//    Rule: show break name ONLY when ALL applicable classes are on that break.
+//    If even one class has a teaching period, show the period name instead.
+function resolveHeaderPeriod(
+  p: Period,
+  classPeriods: Period[],
+  cwBreaks: Array<{id:string; classes:string[]; afterPeriod:number; duration:number}> | undefined,
+  isPartialBreak: boolean,
+): { period: Period; concurrent: Period | null } {
+  if (!isPartialBreak || p.type !== 'lunch') return { period: p, concurrent: null }
+  const brk = cwBreaks?.find(b => b.id === p.id)
+  const concurrent = brk ? (classPeriods[brk.afterPeriod] ?? null) : null
+  if (!concurrent) return { period: p, concurrent: null }
+  // Return a synthetic period with the concurrent period's display but original id
+  return {
+    period: { ...concurrent, id: p.id },
+    concurrent,
+  }
+}
+
 // ── Drag highlight helpers ─────────────────────────────────────
 // RULE: blank cells → colour fill only (no border change)
 //       filled cells → colour border only (no background change)
@@ -1428,16 +1449,29 @@ export function TimetablePage() {
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
               {teacherPeriods.map(p => {
                 const gi = periods.findIndex(pp => pp.id === p.id)
-                // Build break-group label for partial lunch columns (matches PDF sub-header)
                 const isPartialLunch = p.type === 'lunch' && !isFullLunchColumn(p, usedDays, sch, tdata.classes, cwBreaksTT)
                 const brkDef = isPartialLunch ? cwBreaksTT?.find(b => b.id === p.id) : null
+
+                // ── HEADER RULE (from PDF reference) ──────────────────────────
+                // Show break name ONLY when ALL teacher's classes are on that break.
+                // If even one class has a teaching period → show PERIOD NAME instead.
+                // "Period names may repeat" is expected (different class groups,
+                //  different bell schedules, same period number at different times).
+                const concurrentCP   = brkDef ? classPeriods[brkDef.afterPeriod] : null
+                const headerPeriod   = (isPartialLunch && concurrentCP)
+                  ? { ...concurrentCP, id: p.id }  // show concurrent period's name/style
+                  : p
+                const headerTimes    = (isPartialLunch && concurrentCP)
+                  ? teacherTimes.get(concurrentCP.id)   // use base period's times
+                  : teacherTimes.get(p.id)
+                // Chip lists teacher's classes that are on break during this slot
                 const breakGroupLabel = brkDef
                   ? (brkDef.classes.length === 0
-                      ? 'All classes'
+                      ? 'All'
                       : tdata.classes.filter(tc => brkDef.classes.includes(getSectionClassKey(tc))).join(', '))
                   : undefined
                 return (
-                  <PeriodCol key={p.id} p={p} times={teacherTimes.get(p.id)}
+                  <PeriodCol key={p.id} p={headerPeriod} times={headerTimes}
                     editMode={editMode}
                     isDragSrc={gi >= 0 && colDragIdx === gi}
                     isDragOver={gi >= 0 && colDragOverIdx === gi}
@@ -1647,12 +1681,21 @@ export function TimetablePage() {
             <tbody>
               {teacherPeriodsT.map((p, pi) => {
                 const isFullLunch = isFullLunchColumn(p, usedDays, sch, tdata.classes, cwBreaksTTT)
-                const isBreak = p.type !== "class"
-                const times = teacherTimesT.get(p.id)
-                const rowBg = isBreak ? "#fffbeb" : pi%2===0 ? "#fff" : "#FAFAFE"
+                const isPartialLunchT = !isFullLunch && p.type === 'lunch'
                 // For mixed lunch rows: precompute per-day lunch status
-                const mixedLunchBreak = (!isFullLunch && p.type === 'lunch') ? cwBreaksTTT?.find(b => b.id === p.id) : null
-                const mixedPrevPeriod = mixedLunchBreak ? classPeriods[mixedLunchBreak.afterPeriod - 1] : null
+                const mixedLunchBreak   = isPartialLunchT ? cwBreaksTTT?.find(b => b.id === p.id) : null
+                const mixedPrevPeriod   = mixedLunchBreak ? classPeriods[mixedLunchBreak.afterPeriod - 1] : null
+                // HEADER RULE: partial break → show concurrent period name (not break name)
+                const mixedConcurrentCP = mixedLunchBreak ? classPeriods[mixedLunchBreak.afterPeriod] : null
+                const rowHeaderName     = (isPartialLunchT && mixedConcurrentCP) ? mixedConcurrentCP.name : p.name
+                const rowHeaderTimes    = (isPartialLunchT && mixedConcurrentCP)
+                  ? teacherTimesT.get(mixedConcurrentCP.id) : teacherTimesT.get(p.id)
+                const rowBreakChip      = mixedLunchBreak
+                  ? (mixedLunchBreak.classes.length === 0 ? 'All' : tdata.classes.filter(tc => mixedLunchBreak.classes.includes(getSectionClassKey(tc))).join(', '))
+                  : undefined
+                const isBreak = (isPartialLunchT && mixedConcurrentCP) ? false : p.type !== "class"
+                const times = rowHeaderTimes
+                const rowBg = isBreak ? "#fffbeb" : pi%2===0 ? "#fff" : "#FAFAFE"
                 const giTTT    = periods.findIndex(pp => pp.id === p.id)
                 const canDragTTT = editMode && !isBreak && giTTT >= 0
                 const isSrcTTT   = canDragTTT && colDragIdx === giTTT
@@ -1679,8 +1722,9 @@ export function TimetablePage() {
                         boxShadow: isOverTTT ? "inset 0 0 0 2px #A78BFA" : isSwapTTT ? "0 0 0 2px #fbbf2466" : "none",
                         transition:"background 0.12s, opacity 0.15s",
                       }}>
-                      <div style={{ fontWeight:700, fontSize:11, color: isOverTTT ? "#fff" : isSwapTTT ? "#78350f" : isBreak?"#D4920E":"#1e293b" }}>{p.name}</div>
+                      <div style={{ fontWeight:700, fontSize:11, color: isOverTTT ? "#fff" : isSwapTTT ? "#78350f" : isBreak?"#D4920E":"#1e293b" }}>{rowHeaderName}</div>
                       {times && <div style={{ fontSize:9, color: isOverTTT ? "rgba(255,255,255,0.75)" : "#8B87AD" }}>{times.start} → {times.end}</div>}
+                      {rowBreakChip && <div style={{ fontSize:7, fontWeight:600, color:"#D4920E", background:"#FEF9C3", borderRadius:3, padding:"1px 4px", marginTop:2 }}>🍱 {rowBreakChip}</div>}
                       {canDragTTT && <div style={{ fontSize: isHovTTT||isSrcTTT ? 14 : 10, color: isOverTTT?"rgba(255,255,255,0.95)":isSrcTTT?"#4338ca":isHovTTT?"#7C6FE0":"#C4BFEA", marginTop:1, transition:"font-size 0.1s, color 0.1s", letterSpacing:"-1px" }} title="Drag to swap row">↔</div>}
                     </td>
                     {usedDays.map(day => {
@@ -1809,19 +1853,32 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {periods.map((p, gi) => (
-                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)}
-                  editMode={editMode}
-                  isDragSrc={colDragIdx === gi}
-                  isDragOver={colDragOverIdx === gi}
-                  isSwapped={!!(swappedPeriodIds?.includes(p.id))}
-                  isDimmed={p.type === 'class' && colDragIdx !== null && colDragIdx !== gi && colDragOverIdx !== gi}
-                  onDragStart={() => { setColDragIdx(gi); setSwappedPeriodIds(null) }}
-                  onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
-                  onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
-                  onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
-                />
-              ))}
+              {(() => {
+                const cwSub = (config as any).classwiseBreaks as Array<{id:string;classes:string[];afterPeriod:number;duration:number}> | undefined
+                return periods.map((p, gi) => {
+                  // Header rule: lunch break → show break name only if ALL sections for this
+                  // subject are on break simultaneously; otherwise show the period name.
+                  const brkSub = cwSub?.find(b => b.id === p.id)
+                  const subSecs = sections.filter(sec =>
+                    config.workDays.some(d => classTT[sec.name]?.[d] && Object.values(classTT[sec.name][d]).some(c => c?.subject === subName))
+                  )
+                  const allOnBreak = !!brkSub && subSecs.every(sec => brkSub.classes.length === 0 || brkSub.classes.includes(getSectionClassKey(sec.name)))
+                  const isPartialBreakSub = p.type === 'lunch' && !allOnBreak
+                  const { period: hdrP, concurrent: hdrCP } = resolveHeaderPeriod(p, classPeriods, cwSub, isPartialBreakSub)
+                  return (
+                    <PeriodCol key={p.id} p={hdrP} times={hdrCP ? periodTimes.get(hdrCP.id) : periodTimes.get(p.id)}
+                      editMode={editMode}
+                      isDragSrc={colDragIdx === gi} isDragOver={colDragOverIdx === gi}
+                      isSwapped={!!(swappedPeriodIds?.includes(p.id))}
+                      isDimmed={p.type === 'class' && colDragIdx !== null && colDragIdx !== gi && colDragOverIdx !== gi}
+                      onDragStart={() => { setColDragIdx(gi); setSwappedPeriodIds(null) }}
+                      onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                      onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                      onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                    />
+                  )
+                })
+              })()}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
@@ -2010,19 +2067,31 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {periods.map((p, gi) => (
-                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)}
-                  editMode={editMode}
-                  isDragSrc={colDragIdx === gi}
-                  isDragOver={colDragOverIdx === gi}
-                  isSwapped={!!(swappedPeriodIds?.includes(p.id))}
-                  isDimmed={p.type === 'class' && colDragIdx !== null && colDragIdx !== gi && colDragOverIdx !== gi}
-                  onDragStart={() => { setColDragIdx(gi); setSwappedPeriodIds(null) }}
-                  onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
-                  onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
-                  onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
-                />
-              ))}
+              {(() => {
+                const cwRM = (config as any).classwiseBreaks as Array<{id:string;classes:string[];afterPeriod:number;duration:number}> | undefined
+                return periods.map((p, gi) => {
+                  // Header rule: break only if ALL sections using this room are on that break
+                  const brkRM = cwRM?.find(b => b.id === p.id)
+                  const roomSecs = sections.filter(sec =>
+                    config.workDays.some(d => Object.values(classTT[sec.name]?.[d] ?? {}).some(c => c?.room === roomName))
+                  )
+                  const allOnBreakRM = !!brkRM && roomSecs.every(sec => brkRM.classes.length === 0 || brkRM.classes.includes(getSectionClassKey(sec.name)))
+                  const isPartialBreakRM = p.type === 'lunch' && !allOnBreakRM
+                  const { period: hdrPRM, concurrent: hdrCPRM } = resolveHeaderPeriod(p, classPeriods, cwRM, isPartialBreakRM)
+                  return (
+                    <PeriodCol key={p.id} p={hdrPRM} times={hdrCPRM ? periodTimes.get(hdrCPRM.id) : periodTimes.get(p.id)}
+                      editMode={editMode}
+                      isDragSrc={colDragIdx === gi} isDragOver={colDragOverIdx === gi}
+                      isSwapped={!!(swappedPeriodIds?.includes(p.id))}
+                      isDimmed={p.type === 'class' && colDragIdx !== null && colDragIdx !== gi && colDragOverIdx !== gi}
+                      onDragStart={() => { setColDragIdx(gi); setSwappedPeriodIds(null) }}
+                      onDragEnd={() => { setColDragIdx(null); setColDragOverIdx(null) }}
+                      onDragOver={e => { e.preventDefault(); if (colDragIdx !== null && colDragIdx !== gi) setColDragOverIdx(gi) }}
+                      onDrop={() => { if (colDragIdx !== null && colDragIdx !== gi) handleShift(colDragIdx, gi); setColDragIdx(null); setColDragOverIdx(null) }}
+                    />
+                  )
+                })
+              })()}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
