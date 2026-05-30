@@ -185,8 +185,42 @@ const WIZARD_STEP_LABELS: Record<number, string> = {
   5: 'Complete',
 }
 
-const TTLIST_KEY    = 'schedu-tt-list'
-const ACTIVE_TT_KEY = 'schedu-active-tt'
+const TTLIST_KEY     = 'schedu-tt-list'
+const ACTIVE_TT_KEY  = 'schedu-active-tt'
+const TT_SNAPSHOT_PFX = 'schedu-tt-snap-'   // + ttId → full store snapshot per timetable
+
+// ── Per-timetable snapshot helpers ─────────────────────────────
+// Fields that differ per timetable (everything except auth/UI).
+// We save and restore all of these when switching between timetables.
+const TT_SNAPSHOT_FIELDS = [
+  'step','config','sections','staff','breaks','periods',
+  'classTT','teacherTT','substitutions','conflicts','suggestions',
+  'optionalConfigs','subjectPools','participantPools','rooms',
+  'facilities','teacherPools',
+] as const
+
+function saveTTSnapshot(id: string) {
+  try {
+    const state = useTimetableStore.getState()
+    const snap: Record<string, unknown> = {}
+    TT_SNAPSHOT_FIELDS.forEach(k => { snap[k] = (state as any)[k] })
+    localStorage.setItem(TT_SNAPSHOT_PFX + id, JSON.stringify(snap))
+  } catch { /* quota full – silently ignore */ }
+}
+
+function restoreTTSnapshot(id: string): boolean {
+  try {
+    const raw = localStorage.getItem(TT_SNAPSHOT_PFX + id)
+    if (!raw) return false
+    const snap = JSON.parse(raw) as Record<string, unknown>
+    // Apply snapshot via Zustand set
+    const store = useTimetableStore.getState()
+    // Use resetWizard to clear first, then patch in saved data
+    store.resetWizard()
+    useTimetableStore.setState(snap as any)
+    return true
+  } catch { return false }
+}
 
 const SEED_TT: TTEntry[] = [
   {
@@ -582,6 +616,15 @@ export function DashboardPage() {
   const [ttList,        setTTList]        = useState<TTEntry[]>(loadTTList)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
+  // On dashboard load: auto-save a snapshot of the current timetable so that
+  // if the user navigated away from the wizard (sidebar / back button), their
+  // work is still captured before they switch to another timetable.
+  useEffect(() => {
+    const activeId = getActiveTTId()
+    if (activeId) saveTTSnapshot(activeId)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])  // run once on mount
+
   // Sync the active wizard's step from Zustand store into the list
   useEffect(() => {
     const activeId = getActiveTTId()
@@ -600,19 +643,38 @@ export function DashboardPage() {
 
   // ── Timetable actions ─────────────────────────────────────────
   const handleTTCreated = (entry: TTEntry) => {
+    // Save current timetable's full state before switching away
+    const currentId = getActiveTTId()
+    if (currentId) saveTTSnapshot(currentId)
+
     const next = [entry, ...ttList]
     setTTList(next)
     saveTTList(next)
     setActiveTTId(entry.id)
+    // New timetable: start fresh
+    useTimetableStore.getState().resetWizard()
     useTimetableStore.getState().setConfig({ timetableName: entry.name } as any)
     useTimetableStore.getState().setStep(1)
     window.location.href = '/wizard'
   }
 
   const handleContinue = (t: TTEntry) => {
+    const currentId = getActiveTTId()
+    if (currentId === t.id) {
+      // Already the active one — just navigate
+      window.location.href = '/wizard'
+      return
+    }
+    // Save outgoing timetable's full state
+    if (currentId) saveTTSnapshot(currentId)
+
     setActiveTTId(t.id)
-    useTimetableStore.getState().setConfig({ timetableName: t.name } as any)
-    useTimetableStore.getState().setStep(Math.max(1, t.wizardStep))
+    // Restore incoming timetable's saved state (or start fresh if none)
+    const restored = restoreTTSnapshot(t.id)
+    if (!restored) {
+      useTimetableStore.getState().setConfig({ timetableName: t.name } as any)
+      useTimetableStore.getState().setStep(Math.max(1, t.wizardStep))
+    }
     window.location.href = '/wizard'
   }
 
