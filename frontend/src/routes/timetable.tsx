@@ -1065,6 +1065,16 @@ export function TimetablePage() {
     [sections, classPeriods, cwBreaksGlobal, config.startTime]
   )
 
+  // Unified columns over ALL sections — used by Room & Subject views so their
+  // period columns reflect the SAME staggered (period, startTime) structure as
+  // the teacher view. Avoids the time-accumulation trap of periodTimes (which
+  // walks the canonical periods array that contains all staggered lunches).
+  const unifiedAllCols = useMemo(
+    () => buildUnifiedColumns(sections.map(s=>s.name), classPeriods, periods, cwBreaksGlobal, config),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sections, classPeriods, periods, cwBreaksGlobal, config.startTime]
+  )
+
   // Per-teacher unified columns + schedules — the most expensive computation.
   // Keyed by teacher name. Recomputes only when classTT / sections / periods change.
   const teacherTTCache = useMemo(() => {
@@ -2266,50 +2276,61 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {classPeriods.map(p => (
-                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)} editMode={false} />
-              ))}
+              {unifiedAllCols.columns.map(col => {
+                const chip = col.type === 'class' && globalOwningInfo.isSplit(col.periodId)
+                  ? globalOwningInfo.owningLabel(col.periodId, col.startMin) : undefined
+                const headerP: Period = { id: col.periodId, name: col.name, duration: col.endMin-col.startMin, type: col.type, shiftable: false }
+                return <PeriodCol key={col.key} p={headerP} times={{ start: col.start, end: col.end }} editMode={false} breakGroupLabel={chip} />
+              })}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
                 <tr key={day} style={{ background:di%2===0?"#fff":"#FAFAFE" }}>
                   <td style={{ padding:"6px 12px", fontWeight:700, fontSize:11, color:"#1e293b", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>{DAY_SHORT[day]??day.slice(0,3)}</td>
-                  {classPeriods.map(p => {
-                    const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
+                  {unifiedAllCols.columns.map(col => {
+                    if (col.type !== 'class') {
+                      const bp: Period = { id: col.periodId, name: col.name, duration: col.endMin-col.startMin, type: col.type, shiftable: false }
+                      return <BreakCell key={col.key} p={bp} />
+                    }
+                    // Sections teaching this subject in THIS exact (periodId, startMin) slot
+                    const hits = sections.filter(sec => {
+                      const slot = allSectionSchedules.get(getSectionClassKey(sec.name))?.get(col.periodId)
+                      return slot?.startMin === col.startMin && classTT[sec.name]?.[day]?.[col.periodId]?.subject === subName
+                    })
                     const subSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
-                    const subCellKey = `${p.id}|${day}`
+                    const subCellKey = `${col.key}|${day}`
                     const subIsTarget = isDragging && !!subSecName && (poolDragItem?.section === subSecName || dragItem?.section === subSecName)
-                    const subConflict = subIsTarget ? checkSwapConflict(subSecName, day, p.id) : null
+                    const subConflict = subIsTarget ? checkSwapConflict(subSecName, day, col.periodId) : null
                     const subDragProps = {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCellRaf(subCellKey) },
                       onDrop: (e: React.DragEvent) => {
                         e.preventDefault()
                         if (!subSecName || !dragItem) return
                         if (subConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(subConflict); return }
-                        handleDrop(e, subSecName, day, p.id)
+                        handleDrop(e, subSecName, day, col.periodId)
                       },
                       onDragLeave: clearDragOverCell,
                     }
                     if (!hits.length) return (
-                      <td key={p.id} {...subDragProps}
+                      <td key={col.key} {...subDragProps}
                         style={{ ...dragTdStyle(subIsTarget, !!subConflict, false), position:"relative" as const }}>
                         <div style={{ ...dragInnerStyle(subIsTarget, !!subConflict), position:"relative" as const }}>
                           {subIsTarget && dragOverCell===subCellKey && <DropIndicator hasConflict={!!subConflict} />}
                         </div>
                       </td>
                     )
-                    const subIsSrc = !!(dragItem?.section===subSecName && dragItem?.day===day && dragItem?.periodId===p.id)
+                    const subIsSrc = !!(dragItem?.section===subSecName && dragItem?.day===day && dragItem?.periodId===col.periodId)
                     const colorClass = getSubjectColor(subName)
                     return (
-                      <td key={p.id} {...subDragProps}
+                      <td key={col.key} {...subDragProps}
                         style={{ ...dragTdStyle(subIsTarget, !!subConflict, true), position:"relative" as const }}>
                         {subIsTarget && dragOverCell===subCellKey && <DropIndicator hasConflict={!!subConflict} />}
                         <div className={`${colorClass}${subIsSrc ? " tt-drag-src" : ""}`}
                           draggable={editMode && !!subSecName}
-                          onDragStart={editMode && subSecName ? e => handleDragStart(e, {section:subSecName, day, periodId:p.id}) : undefined}
+                          onDragStart={editMode && subSecName ? e => handleDragStart(e, {section:subSecName, day, periodId:col.periodId}) : undefined}
                           style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:editMode&&subSecName?"grab":"default" }}>
                           {hits.map(sec => {
-                            const cell = classTT[sec.name][day][p.id]
+                            const cell = classTT[sec.name][day][col.periodId]
                             return (
                               <div key={sec.name} style={{ marginBottom:2 }}>
                                 <div style={{ fontSize:10, fontWeight:700 }}>{sec.name}</div>
@@ -2354,50 +2375,59 @@ export function TimetablePage() {
               ))}
             </tr></thead>
             <tbody>
-              {classPeriods.map((p, pi) => {
-                const times = periodTimes.get(p.id)
+              {unifiedAllCols.columns.map((col, pi) => {
+                const isBreakRow = col.type !== 'class'
+                const chip = col.type === 'class' && globalOwningInfo.isSplit(col.periodId)
+                  ? globalOwningInfo.owningLabel(col.periodId, col.startMin) : undefined
                 return (
-                  <tr key={p.id} style={{ background: pi%2===0?"#fff":"#FAFAFE" }}>
+                  <tr key={col.key} style={{ background: isBreakRow ? "#fffbeb" : pi%2===0?"#fff":"#FAFAFE" }}>
                     <td style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, border:"1px solid #E8E4FF" }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                      <div style={{ fontWeight:700, fontSize:11, color: isBreakRow?"#D4920E":"#1e293b" }}>{col.name}</div>
+                      <div style={{ fontSize:9, color:"#8B87AD" }}>{col.start} → {col.end}</div>
+                      {chip && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2, whiteSpace:"normal", wordBreak:"break-word", lineHeight:1.3 }}>{chip}</div>}
                     </td>
                     {usedDays.map(day => {
-                      const hits = sections.filter(sec => classTT[sec.name]?.[day]?.[p.id]?.subject === subName)
+                      if (isBreakRow) {
+                        return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{col.name}</td>
+                      }
+                      const hits = sections.filter(sec => {
+                        const slot = allSectionSchedules.get(getSectionClassKey(sec.name))?.get(col.periodId)
+                        return slot?.startMin === col.startMin && classTT[sec.name]?.[day]?.[col.periodId]?.subject === subName
+                      })
                       const subTSecName = hits[0]?.name ?? (poolDragItem?.subject === subName ? poolDragItem.section : "")
-                      const subTKey = `${p.id}|${day}`
+                      const subTKey = `${col.key}|${day}`
                       const subTIsTarget = isDragging && !!subTSecName && (poolDragItem?.section === subTSecName || dragItem?.section === subTSecName)
-                      const subTConflict = subTIsTarget ? checkSwapConflict(subTSecName, day, p.id) : null
+                      const subTConflict = subTIsTarget ? checkSwapConflict(subTSecName, day, col.periodId) : null
                       const subTDragProps = {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCellRaf(subTKey) },
                         onDrop: (e: React.DragEvent) => {
                           e.preventDefault()
                           if (!subTSecName || !dragItem) return
                           if (subTConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(subTConflict); return }
-                          handleDrop(e, subTSecName, day, p.id)
+                          handleDrop(e, subTSecName, day, col.periodId)
                         },
                         onDragLeave: clearDragOverCell,
                       }
                       if (!hits.length) return (
-                        <td key={p.id} {...subTDragProps}
+                        <td key={col.key} {...subTDragProps}
                           style={{ ...dragTdStyle(subTIsTarget, !!subTConflict, false), position:"relative" as const }}>
                           <div style={{ ...dragInnerStyle(subTIsTarget, !!subTConflict), position:"relative" as const }}>
                             {subTIsTarget && dragOverCell===subTKey && <DropIndicator hasConflict={!!subTConflict} />}
                           </div>
                         </td>
                       )
-                      const subTIsSrc = !!(dragItem?.section===subTSecName && dragItem?.day===day && dragItem?.periodId===p.id)
+                      const subTIsSrc = !!(dragItem?.section===subTSecName && dragItem?.day===day && dragItem?.periodId===col.periodId)
                       const colorClass = getSubjectColor(subName)
                       return (
-                        <td key={p.id} {...subTDragProps}
+                        <td key={col.key} {...subTDragProps}
                           style={{ ...dragTdStyle(subTIsTarget, !!subTConflict, true), position:"relative" as const }}>
                           {subTIsTarget && dragOverCell===subTKey && <DropIndicator hasConflict={!!subTConflict} />}
                           <div className={`${colorClass}${subTIsSrc ? " tt-drag-src" : ""}`}
                             draggable={editMode && !!subTSecName}
-                            onDragStart={editMode && subTSecName ? e => handleDragStart(e, {section:subTSecName, day, periodId:p.id}) : undefined}
+                            onDragStart={editMode && subTSecName ? e => handleDragStart(e, {section:subTSecName, day, periodId:col.periodId}) : undefined}
                             style={{ borderRadius:5, padding:"4px 7px", minHeight:38, cursor:editMode&&subTSecName?"grab":"default" }}>
                             {hits.map(sec => {
-                              const cell = classTT[sec.name][day][p.id]
+                              const cell = classTT[sec.name][day][col.periodId]
                               return (
                                 <div key={sec.name} style={{ marginBottom:2 }}>
                                   <div style={{ fontSize:10, fontWeight:700 }}>{sec.name}</div>
@@ -2424,9 +2454,19 @@ export function TimetablePage() {
   // ═══════════════════════════════════════════════════════════
   const renderRoomTT = (roomName: string) => {
     const usedDays = config.workDays
-    // Room view: highlight all slots in this room regardless of section
     const isSameRoomDrag = isDragging && (dragItem ? classTT[dragItem.section]?.[dragItem.day]?.[dragItem.periodId]?.room === roomName : false)
-    // Simple period columns only (no assembly/break/dispersal, no staggered splits)
+    // Unified columns — same staggered (period, time) structure as the teacher view.
+    const rmCols = unifiedAllCols.columns
+    // Find the section occupying this room in an exact (periodId, startMin) slot.
+    const findRoomHit = (col: UniCol, day: string) => {
+      for (const sec of sections) {
+        const slot = allSectionSchedules.get(getSectionClassKey(sec.name))?.get(col.periodId)
+        if (!slot || slot.startMin !== col.startMin) continue
+        const cell = classTT[sec.name]?.[day]?.[col.periodId]
+        if (cell?.subject && cell.room === roomName) return { sec: sec.name, cell }
+      }
+      return null
+    }
     return (
       <div>
         <div style={{ padding:"12px 16px", background:"#FAFAFE", borderBottom:"1px solid #E8E4FF" }}>
@@ -2437,53 +2477,56 @@ export function TimetablePage() {
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
               <th style={{ background:"#1e293b", color:"#fff", padding:"8px 12px", textAlign:"left", minWidth:70, fontSize:11, fontWeight:700, border:"1px solid #1e293b" }}>Day</th>
-              {classPeriods.map(p => (
-                <PeriodCol key={p.id} p={p} times={periodTimes.get(p.id)} editMode={false} />
-              ))}
+              {rmCols.map(col => {
+                const chip = col.type === 'class' && globalOwningInfo.isSplit(col.periodId)
+                  ? globalOwningInfo.owningLabel(col.periodId, col.startMin) : undefined
+                const headerP: Period = { id: col.periodId, name: col.name, duration: col.endMin-col.startMin, type: col.type, shiftable: false }
+                return <PeriodCol key={col.key} p={headerP} times={{ start: col.start, end: col.end }} editMode={false} breakGroupLabel={chip} />
+              })}
             </tr></thead>
             <tbody>
               {usedDays.map((day, di) => (
                 <tr key={day} style={{ background:di%2===0?"#fff":"#FAFAFE" }}>
                   <td style={{ padding:"6px 12px", fontWeight:700, fontSize:11, color:"#1e293b", border:"1px solid #E8E4FF", whiteSpace:"nowrap" as const }}>{DAY_SHORT[day]??day.slice(0,3)}</td>
-                  {classPeriods.map(p => {
-                    const hit = sections.flatMap(sec => {
-                      const cell = classTT[sec.name]?.[day]?.[p.id]
-                      return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
-                    })[0]
+                  {rmCols.map(col => {
+                    // Full break / assembly / dispersal column
+                    if (col.type !== 'class') {
+                      const bp: Period = { id: col.periodId, name: col.name, duration: col.endMin-col.startMin, type: col.type, shiftable: false }
+                      return <BreakCell key={col.key} p={bp} />
+                    }
+                    const hit = findRoomHit(col, day)
                     const rmSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
-                    const rmKey = `${p.id}|${day}`
-                    const rmIsTarget = isDragging && (
-                      poolDragItem ? !!rmSecName : isSameRoomDrag
-                    )
+                    const rmKey = `${col.key}|${day}`
+                    const rmIsTarget = isDragging && (poolDragItem ? !!rmSecName : isSameRoomDrag)
                     const rmDropSec = rmSecName || (isSameRoomDrag && dragItem ? dragItem.section : "")
-                    const rmConflict = rmIsTarget ? checkSwapConflict(rmDropSec, day, p.id) : null
+                    const rmConflict = rmIsTarget ? checkSwapConflict(rmDropSec, day, col.periodId) : null
                     const rmDragProps = {
                       onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCellRaf(rmKey) },
                       onDrop: (e: React.DragEvent) => {
                         e.preventDefault()
                         if (!rmDropSec || !dragItem) return
                         if (rmConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(rmConflict); return }
-                        handleDrop(e, rmDropSec, day, p.id)
+                        handleDrop(e, rmDropSec, day, col.periodId)
                       },
                       onDragLeave: clearDragOverCell,
                     }
                     if (!hit) return (
-                      <td key={p.id} {...rmDragProps}
+                      <td key={col.key} {...rmDragProps}
                         style={{ ...dragTdStyle(rmIsTarget, !!rmConflict, false), position:"relative" as const }}>
                         <div style={{ ...dragInnerStyle(rmIsTarget, !!rmConflict), position:"relative" as const }}>
                           {rmIsTarget && dragOverCell===rmKey && <DropIndicator hasConflict={!!rmConflict} />}
                         </div>
                       </td>
                     )
-                    const rmIsSrc = !!(dragItem?.section===rmSecName && dragItem?.day===day && dragItem?.periodId===p.id)
+                    const rmIsSrc = !!(dragItem?.section===rmSecName && dragItem?.day===day && dragItem?.periodId===col.periodId)
                     const colorClass = getSubjectColor(hit.cell.subject)
                     return (
-                      <td key={p.id} {...rmDragProps}
+                      <td key={col.key} {...rmDragProps}
                         style={{ ...dragTdStyle(rmIsTarget, !!rmConflict, true), position:"relative" as const }}>
                         {rmIsTarget && dragOverCell===rmKey && <DropIndicator hasConflict={!!rmConflict} />}
                         <div className={`${colorClass}${rmIsSrc ? " tt-drag-src" : ""}`}
                           draggable={editMode && !!rmSecName}
-                          onDragStart={editMode && rmSecName ? e => handleDragStart(e, {section:rmSecName, day, periodId:p.id}) : undefined}
+                          onDragStart={editMode && rmSecName ? e => handleDragStart(e, {section:rmSecName, day, periodId:col.periodId}) : undefined}
                           style={{ borderRadius:5, padding:"4px 7px", minHeight:44, cursor:editMode&&rmSecName?"grab":"default" }}>
                           <div style={{ fontSize:10, fontWeight:700 }}>{hit.cell.subject}</div>
                           <div style={{ fontSize:9, color:"#475569", fontWeight:600 }}>{hit.sec}</div>
@@ -2523,51 +2566,60 @@ export function TimetablePage() {
               ))}
             </tr></thead>
             <tbody>
-              {classPeriods.map((p, pi) => {
-                const times = periodTimes.get(p.id)
+              {unifiedAllCols.columns.map((col, pi) => {
+                const isBreakRow = col.type !== 'class'
+                const chip = col.type === 'class' && globalOwningInfo.isSplit(col.periodId)
+                  ? globalOwningInfo.owningLabel(col.periodId, col.startMin) : undefined
                 return (
-                  <tr key={p.id} style={{ background: pi%2===0?"#fff":"#FAFAFE" }}>
+                  <tr key={col.key} style={{ background: isBreakRow ? "#fffbeb" : pi%2===0?"#fff":"#FAFAFE" }}>
                     <td style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, border:"1px solid #E8E4FF" }}>
-                      <div style={{ fontWeight:700, fontSize:11, color:"#1e293b" }}>{p.name}</div>
-                      {times && <div style={{ fontSize:9, color:"#8B87AD" }}>{times.start} → {times.end}</div>}
+                      <div style={{ fontWeight:700, fontSize:11, color: isBreakRow?"#D4920E":"#1e293b" }}>{col.name}</div>
+                      <div style={{ fontSize:9, color:"#8B87AD" }}>{col.start} → {col.end}</div>
+                      {chip && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2, whiteSpace:"normal", wordBreak:"break-word", lineHeight:1.3 }}>{chip}</div>}
                     </td>
                     {usedDays.map(day => {
-                      const hit = sections.flatMap(sec => {
-                        const cell = classTT[sec.name]?.[day]?.[p.id]
-                        return cell?.subject && cell.room === roomName ? [{ sec: sec.name, cell }] : []
-                      })[0]
+                      if (isBreakRow) {
+                        return <td key={day} style={{ background:"#fffbeb", border:"1px solid #E8E4FF", textAlign:"center" as const, fontSize:9, color:"#D4920E", fontStyle:"italic", padding:6 }}>{col.name}</td>
+                      }
+                      let hit: { sec:string; cell:any } | null = null
+                      for (const sec of sections) {
+                        const slot = allSectionSchedules.get(getSectionClassKey(sec.name))?.get(col.periodId)
+                        if (!slot || slot.startMin !== col.startMin) continue
+                        const cell = classTT[sec.name]?.[day]?.[col.periodId]
+                        if (cell?.subject && cell.room === roomName) { hit = { sec: sec.name, cell }; break }
+                      }
                       const rmTSecName = hit?.sec ?? (poolDragItem && (sections.find(s=>s.name===poolDragItem.section) as any)?.room === roomName ? poolDragItem.section : "")
-                      const rmTKey = `${p.id}|${day}`
+                      const rmTKey = `${col.key}|${day}`
                       const rmTIsTarget = isDragging && (poolDragItem ? !!rmTSecName : isSameRoomDrag)
                       const rmTDropSec  = rmTSecName || (isSameRoomDrag && dragItem ? dragItem.section : "")
-                      const rmTConflict = rmTIsTarget ? checkSwapConflict(rmTDropSec, day, p.id) : null
+                      const rmTConflict = rmTIsTarget ? checkSwapConflict(rmTDropSec, day, col.periodId) : null
                       const rmTDragProps = {
                         onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverCellRaf(rmTKey) },
                         onDrop: (e: React.DragEvent) => {
                           e.preventDefault()
                           if (!rmTDropSec || !dragItem) return
                           if (rmTConflict) { setDragItem(null); setDragOverCell(null); setConflictWarning(rmTConflict); return }
-                          handleDrop(e, rmTDropSec, day, p.id)
+                          handleDrop(e, rmTDropSec, day, col.periodId)
                         },
                         onDragLeave: clearDragOverCell,
                       }
                       if (!hit) return (
-                        <td key={p.id} {...rmTDragProps}
+                        <td key={col.key} {...rmTDragProps}
                           style={{ ...dragTdStyle(rmTIsTarget, !!rmTConflict, false), position:"relative" as const }}>
                           <div style={{ ...dragInnerStyle(rmTIsTarget, !!rmTConflict), position:"relative" as const }}>
                             {rmTIsTarget && dragOverCell===rmTKey && <DropIndicator hasConflict={!!rmTConflict} />}
                           </div>
                         </td>
                       )
-                      const rmTIsSrc = !!(dragItem?.section===rmTSecName && dragItem?.day===day && dragItem?.periodId===p.id)
+                      const rmTIsSrc = !!(dragItem?.section===rmTSecName && dragItem?.day===day && dragItem?.periodId===col.periodId)
                       const colorClass = getSubjectColor(hit.cell.subject)
                       return (
-                        <td key={p.id} {...rmTDragProps}
+                        <td key={col.key} {...rmTDragProps}
                           style={{ ...dragTdStyle(rmTIsTarget, !!rmTConflict, true), position:"relative" as const }}>
                           {rmTIsTarget && dragOverCell===rmTKey && <DropIndicator hasConflict={!!rmTConflict} />}
                           <div className={`${colorClass}${rmTIsSrc ? " tt-drag-src" : ""}`}
                             draggable={editMode && !!rmTSecName}
-                            onDragStart={editMode && rmTSecName ? e => handleDragStart(e, {section:rmTSecName, day, periodId:p.id}) : undefined}
+                            onDragStart={editMode && rmTSecName ? e => handleDragStart(e, {section:rmTSecName, day, periodId:col.periodId}) : undefined}
                             style={{ borderRadius:5, padding:"4px 7px", minHeight:38, cursor:editMode&&rmTSecName?"grab":"default" }}>
                             <div style={{ fontSize:10, fontWeight:700 }}>{hit.cell.subject}</div>
                             <div style={{ fontSize:9, color:"#475569", fontWeight:600 }}>{hit.sec}</div>
