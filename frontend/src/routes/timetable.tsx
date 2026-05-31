@@ -462,6 +462,51 @@ function resolveUniCell(
 }
 
 /**
+ * isTeachingSlotForClass — class-bell-schedule-based slot eligibility.
+ *
+ * Returns true ONLY when the destination (col) is a genuine teaching slot for
+ * the given section according to THAT CLASS'S bell schedule — independent of
+ * how the visual teacher-timetable column is labelled.
+ *
+ * Rules (per PROJECT_REFERENCE §5–6 and the drag-drop spec):
+ *  1. col.periodId must be a CLASS teaching period (not a break/assembly/dispersal).
+ *  2. The section's bell schedule must place that teaching period at col.startMin.
+ *  3. The section must NOT be on any class-specific break overlapping this slot.
+ *
+ * Never uses col.type for the eligibility decision — validation is entirely
+ * driven by the class's bell schedule + conflict simulation.
+ */
+function isTeachingSlotForClass(
+  sectionName: string,
+  col: UniCol,
+  allSchedules: Map<string, Map<string, SlotMins>>,
+  teachingPeriods: Period[],           // classPeriods — only 'class'-type periods
+  classwiseBreaks: CwBreakLite[] | undefined,
+): boolean {
+  // Rule 1: destination periodId must map to a real teaching period.
+  if (!teachingPeriods.some(p => p.id === col.periodId)) return false
+
+  const k = getSectionClassKey(sectionName)
+  const sched = allSchedules.get(k)
+  if (!sched) return false
+
+  // Rule 2: the section's own schedule must start this period at the column time.
+  const own = sched.get(col.periodId)
+  if (!own || own.startMin !== col.startMin) return false
+
+  // Rule 3: the section must NOT be on a break overlapping this time window.
+  const secBreaks = (classwiseBreaks ?? []).filter(
+    b => b.classes.length === 0 || b.classes.includes(k)
+  )
+  for (const b of secBreaks) {
+    const bs = sched.get(b.id)
+    if (bs && bs.startMin < col.endMin && bs.endMin > col.startMin) return false
+  }
+
+  return true
+}
+
+/**
  * Teacher-specific post-process: collapse split columns where the teacher has
  * zero teaching in ALL splits across all days.  The resulting merged column
  * spans the full time range (earliest start → latest end) and its cells show
@@ -1362,6 +1407,37 @@ export function TimetablePage() {
     const fromCell = classTT[from.section]?.[from.day]?.[from.periodId]
     const toCell   = classTT[section]?.[day]?.[periodId]
     if (!fromCell?.subject) return  // nothing to drag
+
+    // ── Bell-schedule guard (class-specific, not visual column type) ──────
+    // The destination periodId must be a genuine teaching slot for `section`
+    // according to THAT CLASS'S bell schedule.  Never reject based on col.type.
+    {
+      const cwB = (config as any).classwiseBreaks as CwBreakLite[] | undefined
+      const destSched = sectionScheduleMins(section, classPeriods, cwB, config)
+      const destSlot  = destSched.get(periodId)
+      if (!destSlot) {
+        // periodId doesn't exist as a teaching period for this section
+        const pName = classPeriods.find(p => p.id === periodId)?.name ?? periodId
+        setConflictWarning(
+          `${section} does not have ${pName} as a teaching slot in its bell schedule. ` +
+          `This period cannot be moved here.`
+        )
+        return
+      }
+      const sKey = getSectionClassKey(section)
+      const sBreaks = (cwB ?? []).filter(b => b.classes.length === 0 || b.classes.includes(sKey))
+      for (const b of sBreaks) {
+        const bs = destSched.get(b.id)
+        if (bs && bs.startMin < destSlot.endMin && bs.endMin > destSlot.startMin) {
+          const bName = b.name ?? 'break'
+          setConflictWarning(
+            `${section} is on ${bName} during this time slot. ` +
+            `Teaching periods cannot be scheduled during a class's own break.`
+          )
+          return
+        }
+      }
+    }
     // Teacher conflict check: would the from-cell teacher clash at the target slot?
     const fromTeacherBusy = fromCell.teacher && sections.some(s =>
       s.name !== section && classTT[s.name]?.[day]?.[periodId]?.teacher === fromCell.teacher
@@ -1781,11 +1857,10 @@ export function TimetablePage() {
                     // Drag/drop wiring
                     const ttCellKey = `${col.key}|${day}`
                     const poolSec   = poolDragItem && teacherSecNames.includes(poolDragItem.section) ? poolDragItem.section : ""
-                    // A free cell is a valid target only if the dragged section's group
-                    // actually has this period at this column's start time.
-                    const dragSlotHere = (isSameTeacherDrag && dragItem)
-                      ? ttSchedules.get(getSectionClassKey(dragItem.section))?.get(col.periodId)?.startMin === col.startMin
-                      : false
+                    // Bell-schedule-based slot eligibility — never uses col.type.
+                    // True only when the dragged CLASS has a teaching period here per its own bell schedule.
+                    const dragSlotHere = !!(isSameTeacherDrag && dragItem &&
+                      isTeachingSlotForClass(dragItem.section, col, ttAllSchedules, classPeriods, cwBreaksTT))
                     const ttIsTarget = isDragging && (
                       poolDragItem ? (!!taughtSec && poolDragItem.section === taughtSec)
                                    : (taughtCell ? isSameTeacherDrag : dragSlotHere)
@@ -1964,9 +2039,9 @@ export function TimetablePage() {
                       }
                       const ttTKey = `${col.key}|${day}`
                       const poolSec = poolDragItem && teacherSecNames.includes(poolDragItem.section) ? poolDragItem.section : ""
-                      const dragSlotHere = (isSameTeacherDrag && dragItem)
-                        ? tttSchedules.get(getSectionClassKey(dragItem.section))?.get(col.periodId)?.startMin === col.startMin
-                        : false
+                      // Bell-schedule-based slot eligibility (class's bell schedule, not column type).
+                      const dragSlotHere = !!(isSameTeacherDrag && dragItem &&
+                        isTeachingSlotForClass(dragItem.section, col, tttAllSchedules, classPeriods, cwBreaksTTT))
                       const ttTIsTarget = isDragging && (
                         poolDragItem ? (!!taughtSec && poolDragItem.section === taughtSec)
                                      : (taughtCell ? isSameTeacherDrag : dragSlotHere)
