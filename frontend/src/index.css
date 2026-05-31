@@ -34,17 +34,27 @@ body {
 .text-destructive-foreground { color: #ffffff; }
 .ring-ring        { outline-color: #1a7f5a; }
 
-/* ── Button hover states ── */
-/* No `transition: all` — it delays every click by 150ms.
-   Use `active` for instant click feedback; opt-in transitions per component. */
-button {
+/* ── Universal interactive element feedback ──────────────────────────────
+   `filter: brightness` works even when buttons have inline background styles
+   because filter composites the entire rendered element — no specificity war.
+   Using filter instead of background-color changes means zero layout/paint cost.
+   ──────────────────────────────────────────────────────────────────────── */
+button, [role="button"] {
   cursor: pointer;
-  touch-action: manipulation;          /* removes 300ms tap delay on touch */
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
-button:active  { filter: brightness(0.88); }
+/* Instant hover feedback — compositor-only, no layout/paint */
+button:not(:disabled):hover,
+[role="button"]:not([aria-disabled]):hover { filter: brightness(0.91); }
+/* Even faster active/pressed feedback */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled]):active { filter: brightness(0.78); transform: scale(0.985); }
 button:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+/* Select / input also benefit from cursor treatment */
+select, input[type="checkbox"], input[type="radio"] { cursor: pointer; }
 
 /* Opt-in smooth transition only for buttons that need it */
 .btn-smooth { transition: background-color 0.08s ease, color 0.08s ease, border-color 0.08s ease, opacity 0.08s ease; }
@@ -161,6 +171,26 @@ button:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
 /* ── Timetable ── */
 .tt-box { border-radius: 0.75rem; overflow: hidden; }
+
+/* Skeleton shimmer for lazy-loaded timetable cards */
+@keyframes tt-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.tt-skeleton {
+  background: linear-gradient(90deg, #F8F7FF 25%, #EEEAFF 50%, #F8F7FF 75%);
+  background-size: 800px 100%;
+  animation: tt-shimmer 1.4s ease-in-out infinite;
+  border-radius: 10px;
+}
+
+/* content-visibility: auto on entity cards — browser skips layout + paint for
+   off-screen cards, then renders them as they scroll into view */
+.tt-entity-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 450px;
+  contain: layout style;
+}
 
 /* Cell action buttons: always present in DOM, visible only on td:hover.
    Replaces useState(hovered) which caused cascading re-renders. */

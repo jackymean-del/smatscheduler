@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react"
+import React, { useState, useMemo, useEffect, useRef, useCallback, useTransition } from "react"
 import { useTimetableStore } from "@/store/timetableStore"
 import { EditCellModal } from "@/components/modals/EditCellModal"
 import { CalendarView } from "@/components/CalendarView"
@@ -681,6 +681,35 @@ const InsightBanner = React.memo(function InsightBanner({ message, onClose }:{ m
   )
 })
 
+// ── Lazy-loading card wrapper ─────────────────────────────────
+// Passes a render FUNCTION so the expensive child JSX is never built until the
+// card enters (or is near) the viewport. Off-screen cards show a shimmer
+// skeleton. Once visible they stay rendered (obs.disconnect after first fire).
+function LazyCard({ render: renderFn, minHeight = 450 }: {
+  render: () => React.ReactNode; minHeight?: number
+}) {
+  const [visible, setVisible] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current; if (!el) return
+    // Render immediately if already in / near viewport (first few cards)
+    if (el.getBoundingClientRect().top < window.innerHeight + 600) { setVisible(true); return }
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { rootMargin: '600px' }   // preload 600px before scroll-in
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+  return (
+    <div ref={ref}>
+      {visible
+        ? renderFn()
+        : <div className="tt-skeleton" style={{ height: minHeight }} />}
+    </div>
+  )
+}
+
 // ── Period header — draggable column header in edit mode ──────
 function PeriodCol({ p, times, editMode, isDragSrc, isDragOver, isSwapped, isDimmed,
   onDragStart, onDragEnd, onDragOver, onDrop, breakGroupLabel }: {
@@ -905,6 +934,10 @@ export function TimetablePage() {
   const [transposed, setTransposed] = useState(false)
   const [selectedEntity, setSelectedEntity] = useState<string>("ALL")
   const [uncoveredOpen, setUncoveredOpen] = useState(false)
+  // startTransition: marks view/mode switches as non-urgent so the browser
+  // can show click/hover feedback immediately before the expensive re-render.
+  const [isViewPending, startViewTransition] = useTransition()
+
   const [dragItem, setDragItem] = useState<{section:string;day:string;periodId:string}|null>(null)
   const [dragOverCell, setDragOverCell] = useState<string|null>(null) // key = "sec|day|pid"
   // RAF-throttled hover setter: prevents 60fps state updates during drag
@@ -2601,11 +2634,17 @@ export function TimetablePage() {
     return (
       <div style={{ display:"flex", flexDirection:"column" as const, gap:16 }}>
         {list.map(e => (
-          <div key={e} style={{ background:"#fff", borderRadius:10, boxShadow:"0 1px 3px rgba(0,0,0,0.08)", overflow:"hidden" }}>
-            {viewMode === "class"   && (transposed ? renderClassTTTransposed(e) : renderClassTT(e))}
-            {viewMode === "teacher" && (transposed ? renderTeacherTTTransposed(e) : renderTeacherTT(e))}
-            {viewMode === "subject" && (transposed ? renderSubjectTTTransposed(e) : renderSubjectTT(e))}
-            {viewMode === "room"    && (transposed ? renderRoomTTTransposed(e) : renderRoomTT(e))}
+          // tt-entity-card: content-visibility:auto skips off-screen layout/paint
+          // LazyCard: defers JSX construction until card enters viewport
+          <div key={e} className="tt-entity-card" style={{ background:"#fff", borderRadius:10, boxShadow:"0 1px 3px rgba(0,0,0,0.08)", overflow:"hidden" }}>
+            <LazyCard render={() => (
+              <>
+                {viewMode === "class"   && (transposed ? renderClassTTTransposed(e) : renderClassTT(e))}
+                {viewMode === "teacher" && (transposed ? renderTeacherTTTransposed(e) : renderTeacherTT(e))}
+                {viewMode === "subject" && (transposed ? renderSubjectTTTransposed(e) : renderSubjectTT(e))}
+                {viewMode === "room"    && (transposed ? renderRoomTTTransposed(e) : renderRoomTT(e))}
+              </>
+            )} />
           </div>
         ))}
       </div>
@@ -2889,7 +2928,7 @@ export function TimetablePage() {
           <div style={{ display:"flex", alignItems:"stretch", marginLeft:4 }}>
             {VIEW_TABS.map(v => (
               <button key={v.key}
-                onClick={() => { setViewMode(v.key as ViewMode); setSelectedEntity("ALL"); setTransposed(false) }}
+                onClick={() => startViewTransition(() => { setViewMode(v.key as ViewMode); setSelectedEntity("ALL"); setTransposed(false) })}
                 style={{
                   padding:"0 16px", height:"100%", border:"none", background:"none",
                   cursor:"pointer", fontSize:12.5,
@@ -2905,7 +2944,7 @@ export function TimetablePage() {
 
           {/* Entity dropdown */}
           <div style={{ display:"flex", alignItems:"center", marginLeft:6 }}>
-            <select value={selectedEntity} onChange={e => setSelectedEntity(e.target.value)}
+            <select value={selectedEntity} onChange={e => startViewTransition(() => setSelectedEntity(e.target.value))}
               style={{
                 padding:"5px 10px", border:"1px solid #E5EBF5", borderRadius:6,
                 fontSize:12, background:"#fff", color:"#374151",
@@ -2929,16 +2968,18 @@ export function TimetablePage() {
           {/* ── Traditional / Calendar toggle ── */}
           <div style={{ display:"flex", alignItems:"center", gap:4, paddingRight:8, borderRight:"1px solid #E5EBF5" }}>
             <div style={{ display:"flex", border:"1px solid #E5EBF5", borderRadius:6, overflow:"hidden" }}>
-              <button onClick={() => setMainMode("traditional")}
+              <button onClick={() => startViewTransition(() => setMainMode("traditional"))}
                 style={{ padding:"5px 12px", border:"none", cursor:"pointer", fontSize:11, fontWeight:500,
                   background: mainMode==="traditional" ? "#1e293b" : "#fff",
-                  color:      mainMode==="traditional" ? "#fff"    : "#64748b" }}>
+                  color:      mainMode==="traditional" ? "#fff"    : "#64748b",
+                  opacity:    isViewPending && mainMode!=="traditional" ? 0.6 : 1 }}>
                 ⊞ Traditional
               </button>
-              <button onClick={() => setMainMode("calendar")}
+              <button onClick={() => startViewTransition(() => setMainMode("calendar"))}
                 style={{ padding:"5px 12px", border:"none", cursor:"pointer", fontSize:11, fontWeight:500,
                   background: mainMode==="calendar" ? "#1e293b" : "#fff",
-                  color:      mainMode==="calendar" ? "#fff"    : "#64748b" }}>
+                  color:      mainMode==="calendar" ? "#fff"    : "#64748b",
+                  opacity:    isViewPending && mainMode!=="calendar" ? 0.6 : 1 }}>
                 📅 Calendar
               </button>
             </div>
@@ -3080,8 +3121,8 @@ export function TimetablePage() {
           }}>
             {/* Normal / Transposed */}
             <div style={{ display:"flex", border:"1px solid #E5EBF5", borderRadius:6, overflow:"hidden" }}>
-              <button onClick={() => setTransposed(false)} style={{ padding:"4px 11px", border:"none", background:!transposed?"#374151":"#fff", color:!transposed?"#fff":"#64748b", fontSize:11, fontWeight:500, cursor:"pointer" }}>☰ Normal</button>
-              <button onClick={() => setTransposed(true)}  style={{ padding:"4px 11px", border:"none", background:transposed?"#374151":"#fff",  color:transposed?"#fff":"#64748b",  fontSize:11, fontWeight:500, cursor:"pointer" }}>⊞ Transposed</button>
+              <button onClick={() => startViewTransition(() => setTransposed(false))} style={{ padding:"4px 11px", border:"none", background:!transposed?"#374151":"#fff", color:!transposed?"#fff":"#64748b", fontSize:11, fontWeight:500, cursor:"pointer" }}>☰ Normal</button>
+              <button onClick={() => startViewTransition(() => setTransposed(true))}  style={{ padding:"4px 11px", border:"none", background:transposed?"#374151":"#fff",  color:transposed?"#fff":"#64748b",  fontSize:11, fontWeight:500, cursor:"pointer" }}>⊞ Transposed</button>
             </div>
             <div style={{ width:1, height:18, background:"#CBD5E1" }} />
             {TBtn(showTeacher, () => setShowTeacher(!showTeacher), "Faculty", "👤")}
