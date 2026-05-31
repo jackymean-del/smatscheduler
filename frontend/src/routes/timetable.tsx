@@ -235,6 +235,7 @@ type SlotMins = { startMin:number; endMin:number }
 type UniCol = {
   key:string; periodId:string; name:string; type:Period['type'];
   startMin:number; endMin:number; start:string; end:string;
+  mergedFrom?: UniCol[];  // set when multiple idle splits are collapsed for a teacher
 }
 
 function fmtMin(m:number, config:any): string {
@@ -413,6 +414,75 @@ function resolveUniCell(
   return { kind:'free' }
 }
 
+/**
+ * Teacher-specific post-process: collapse split columns where the teacher has
+ * zero teaching in ALL splits across all days.  The resulting merged column
+ * spans the full time range (earliest start → latest end) and its cells show
+ * the union of sections on lunch across all the original splits.
+ */
+function mergeTeacherIdleColumns(
+  cols: UniCol[],
+  teacherSecNames: string[],
+  ttSchedules: Map<string, Map<string, SlotMins>>,
+  classTT: Record<string, any>,
+  tn: string,
+  days: string[],
+  config: any,
+): UniCol[] {
+  // Group class-type columns by periodId to find splits
+  const groups = new Map<string, UniCol[]>()
+  for (const col of cols) {
+    if (col.type !== 'class') continue
+    const arr = groups.get(col.periodId) ?? []
+    arr.push(col)
+    groups.set(col.periodId, arr)
+  }
+
+  const mergeMap = new Map<string, UniCol>() // original col.key → merged col
+  for (const [pid, splitCols] of groups) {
+    if (splitCols.length < 2) continue
+    // If the teacher teaches in ANY split on ANY day, keep all splits
+    const hasTeaching = splitCols.some(col =>
+      days.some(day =>
+        teacherSecNames.some(S => {
+          const slot = ttSchedules.get(getSectionClassKey(S))?.get(pid)
+          if (!slot || slot.startMin !== col.startMin) return false
+          const c = classTT[S]?.[day]?.[pid]
+          return c?.subject && c.teacher === tn
+        })
+      )
+    )
+    if (hasTeaching) continue
+    const startMin = Math.min(...splitCols.map(c => c.startMin))
+    const endMin   = Math.max(...splitCols.map(c => c.endMin))
+    const merged: UniCol = {
+      key: `${pid}@merged`,
+      periodId: pid,
+      name: splitCols[0].name,
+      type: 'class',
+      startMin, endMin,
+      start: fmtMin(startMin, config),
+      end:   fmtMin(endMin, config),
+      mergedFrom: splitCols,
+    }
+    splitCols.forEach(col => mergeMap.set(col.key, merged))
+  }
+
+  if (mergeMap.size === 0) return cols
+
+  const seen = new Set<string>()
+  const result: UniCol[] = []
+  for (const col of cols) {
+    if (!mergeMap.has(col.key)) {
+      result.push(col)
+    } else {
+      const m = mergeMap.get(col.key)!
+      if (!seen.has(m.key)) { seen.add(m.key); result.push(m) }
+    }
+  }
+  return result
+}
+
 // ── Shared lunch break cell — shows compressed class names (no icon) ──
 function LunchCell({ id, secName }: { id: string; secName?: string }) {
   return (
@@ -511,7 +581,7 @@ function PeriodCol({ p, times, editMode, isDragSrc, isDragOver, isSwapped, isDim
           : isDragSrc  ? "2px dashed #7C6FE0"
           : isSwapped  ? "2px solid #eab308"
           : "1px solid #E8E4FF",
-        textAlign:"center", minWidth:80, whiteSpace:"nowrap", position:"relative" as const,
+        textAlign:"center", minWidth:80, position:"relative" as const,
         cursor: canDrag ? "grab" : "default",
         opacity: isDimmed ? 0.35 : isDragSrc ? 0.52 : 1,
         userSelect:"none" as const,
@@ -521,9 +591,9 @@ function PeriodCol({ p, times, editMode, isDragSrc, isDragOver, isSwapped, isDim
           : isSwapped ? "0 0 0 2px #fbbf2466, 0 2px 8px rgba(234,179,8,0.18)"
           : "none",
       }}>
-      <div>{p.name}</div>
-      {times && <><div style={{ fontSize:8, fontWeight:600, opacity:0.9 }}>{times.start}</div><div style={{ fontSize:8, fontWeight:400, opacity:0.6 }}>→ {times.end}</div></>}
-      {breakGroupLabel && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2, letterSpacing:"0.2px" }}>{breakGroupLabel}</div>}
+      <div style={{ whiteSpace:"nowrap" }}>{p.name}</div>
+      {times && <><div style={{ fontSize:8, fontWeight:600, opacity:0.9, whiteSpace:"nowrap" }}>{times.start}</div><div style={{ fontSize:8, fontWeight:400, opacity:0.6, whiteSpace:"nowrap" }}>→ {times.end}</div></>}
+      {breakGroupLabel && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2, letterSpacing:"0.2px", whiteSpace:"normal", wordBreak:"break-word", lineHeight:1.3 }}>{breakGroupLabel}</div>}
       {canDrag && (
         <div style={{
           fontSize: hov || isDragSrc ? 14 : 10,
@@ -1514,8 +1584,10 @@ export function TimetablePage() {
     // class groups lunch at different points. Each distinct (period, startTime)
     // becomes its own column; partial breaks are overlaid into teaching cells.
     const cwBreaksTT = (config as any).classwiseBreaks as CwBreakLite[] | undefined
-    const { columns: ttCols, schedules: ttSchedules } =
+    const { columns: ttColsRaw, schedules: ttSchedules } =
       buildUnifiedColumns(teacherSecNames, classPeriods, periods, cwBreaksTT, config)
+    // Merge split columns where this teacher has no teaching in any split
+    const ttCols = mergeTeacherIdleColumns(ttColsRaw, teacherSecNames, ttSchedules, classTT, tn, usedDays, config)
     // School-wide owning-class info (for the heading chip on split periods)
     const ttOwn = buildOwningInfo(sections.map(s=>s.name), classPeriods, cwBreaksTT, config)
 
@@ -1625,7 +1697,11 @@ export function TimetablePage() {
                       )
                     }
                     // Not teaching → is one of the teacher's classes on lunch in this slot?
-                    const lunchSecs = teacherSecNames.filter(S => resolveUniCell(S, col, ttSchedules, cwBreaksTT).kind === 'lunch')
+                    // For merged columns, check lunch across ALL original splits.
+                    const lunchSrcs = col.mergedFrom ?? [col]
+                    const lunchSecs = teacherSecNames.filter(S =>
+                      lunchSrcs.some(src => resolveUniCell(S, src, ttSchedules, cwBreaksTT).kind === 'lunch')
+                    )
                     if (lunchSecs.length) return <LunchCell key={col.key} id={col.key} secName={compressClassNames(lunchSecs)} />
                     // Free / droppable
                     return (
@@ -1667,8 +1743,10 @@ export function TimetablePage() {
     )
     // ── Unified time-slot rows (same model as normal teacher view) ─────────
     const cwBreaksTTT = (config as any).classwiseBreaks as CwBreakLite[] | undefined
-    const { columns: tttCols, schedules: tttSchedules } =
+    const { columns: tttColsRaw, schedules: tttSchedules } =
       buildUnifiedColumns(teacherSecNames, classPeriods, periods, cwBreaksTTT, config)
+    // Merge split rows where this teacher has no teaching in any split
+    const tttCols = mergeTeacherIdleColumns(tttColsRaw, teacherSecNames, tttSchedules, classTT, tn, usedDays, config)
     const tttOwn = buildOwningInfo(sections.map(s=>s.name), classPeriods, cwBreaksTTT, config)
 
     return (
@@ -1696,7 +1774,7 @@ export function TimetablePage() {
                     <td style={{ padding:"6px 10px", whiteSpace:"nowrap" as const, border:"1px solid #E8E4FF" }}>
                       <div style={{ fontWeight:700, fontSize:11, color: isBreakRow?"#D4920E":"#1e293b" }}>{col.name}</div>
                       <div style={{ fontSize:9, color:"#8B87AD" }}>{col.start} → {col.end}</div>
-                      {chip && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2 }}>{chip}</div>}
+                      {chip && <div style={{ fontSize:7, fontWeight:600, color:"#475569", background:"#EEF2FF", borderRadius:3, padding:"1px 4px", marginTop:2, whiteSpace:"normal", wordBreak:"break-word", lineHeight:1.3 }}>{chip}</div>}
                     </td>
                     {usedDays.map(day => {
                       // ── Full break / assembly / dispersal row ──
@@ -1749,7 +1827,11 @@ export function TimetablePage() {
                           />
                         )
                       }
-                      const lunchSecs = teacherSecNames.filter(S => resolveUniCell(S, col, tttSchedules, cwBreaksTTT).kind === 'lunch')
+                      // For merged columns, check lunch across ALL original splits
+                      const lunchSrcsTT = col.mergedFrom ?? [col]
+                      const lunchSecs = teacherSecNames.filter(S =>
+                        lunchSrcsTT.some(src => resolveUniCell(S, src, tttSchedules, cwBreaksTTT).kind === 'lunch')
+                      )
                       if (lunchSecs.length) return <LunchCell key={col.key} id={ttTKey} secName={compressClassNames(lunchSecs)} />
                       return (
                         <td key={col.key} {...ttTDragProps}
