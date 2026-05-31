@@ -593,12 +593,13 @@ const LunchCell = React.memo(function LunchCell({ id, secName, isTarget, hasConf
       : undefined
   return (
     <td key={id} {...(isTarget ? dragProps : undefined)}
-      style={{ background:"#FFFBEB", border:"1px solid #E8E4FF",
-        ...(outline ? { outline, outlineOffset:"-2px", zIndex:1, position:"relative" as const } : {}),
+      style={{ background:"#FFFBEB", border:"1px solid #E8E4FF", position:"relative" as const,
+        ...(outline ? { outline, outlineOffset:"-2px", zIndex:1 } : {}),
         padding:"4px 6px", textAlign:"center" as const, verticalAlign:"middle" as const,
         cursor: isTarget ? "copy" : "default" }}>
       <div style={{ fontSize:9, fontStyle:"italic", color:"#D4920E", fontWeight:600, lineHeight:1.4 }}>Lunch Break</div>
       {secName && <div style={{ fontSize:9, color:"#D4920E", opacity:0.8, fontWeight:500 }}>{secName}</div>}
+      {isTarget && <DropIndicator hasConflict={!!hasConflict} />}
     </td>
   )
 })
@@ -710,6 +711,29 @@ function LazyCard({ render: renderFn, minHeight = 450 }: {
   )
 }
 
+// ── Drop-target indicator: "+" (green pulse) or "✕" (red) ────
+// Centered absolutely inside the target cell. Never blocks pointer events.
+const DropIndicator = React.memo(function DropIndicator({ hasConflict }: { hasConflict: boolean }) {
+  return (
+    <div style={{
+      position:"absolute", top:"50%", left:"50%",
+      transform:"translate(-50%,-50%)",
+      width:28, height:28, borderRadius:"50%",
+      background: hasConflict ? "#EF4444" : "#10B981",
+      color:"#fff",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      fontSize: hasConflict ? 13 : 20, fontWeight:900, lineHeight:1,
+      pointerEvents:"none", zIndex:6,
+      animation: hasConflict ? undefined : "tt-drop-plus 0.65s ease-in-out infinite",
+      boxShadow: hasConflict
+        ? "0 0 0 3px rgba(239,68,68,0.25), 0 2px 8px rgba(239,68,68,0.4)"
+        : "0 0 0 3px rgba(16,185,129,0.25), 0 2px 8px rgba(16,185,129,0.4)",
+    }}>
+      {hasConflict ? "✕" : "+"}
+    </div>
+  )
+})
+
 // ── Period header — draggable column header in edit mode ──────
 function PeriodCol({ p, times, editMode, isDragSrc, isDragOver, isSwapped, isDimmed,
   onDragStart, onDragEnd, onDragOver, onDrop, breakGroupLabel }: {
@@ -779,13 +803,14 @@ type CellOption = { subject: string; teacher: string; room: string }
 function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher, showTeacher, showRoom,
   onClick, dragOver, onDragOver, onDrop, onDragLeave, absentHighlight, options,
   isDraggable, onDragStart, onDelete, editMode, isDropTarget, hasConflict,
+  isSrc,  // true when this cell is actively being dragged (pluck/fade effect)
 }:{
   subject?:string; teacher?:string; room?:string; isClassTeacher?:boolean; isSub?:boolean; subTeacher?:string;
   showTeacher:boolean; showRoom:boolean; onClick?:()=>void;
   dragOver?:boolean; onDragOver?:(e:React.DragEvent)=>void; onDrop?:(e:React.DragEvent)=>void; onDragLeave?:()=>void;
   absentHighlight?:boolean; options?: CellOption[];
   isDraggable?:boolean; onDragStart?:(e:React.DragEvent)=>void; onDelete?:()=>void; editMode?:boolean;
-  isDropTarget?:boolean; hasConflict?:string|null;
+  isDropTarget?:boolean; hasConflict?:string|null; isSrc?:boolean;
 }) {
   // No JS hover state — action buttons shown via CSS `.tt-cell-actions` on `td:hover`
   const sharedTdProps = {
@@ -795,10 +820,12 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   }
   const isConflict = !!hasConflict
 
-  // ── Empty cell — fill only, no outline ────────────────────
+  // ── Empty cell — fill only + DropIndicator on target ──────
   if (!subject) return (
     <td style={{ ...dragTdStyle(!!isDropTarget, isConflict, false), position:"relative" as const }} {...sharedTdProps}>
-      <div onClick={onClick} style={dragInnerStyle(!!isDropTarget, isConflict)} />
+      <div onClick={onClick} style={{ ...dragInnerStyle(!!isDropTarget, isConflict), position:"relative" as const }}>
+        {!!isDropTarget && <DropIndicator hasConflict={isConflict} />}
+      </div>
     </td>
   )
   // ── Multi-option / parallel group block ──────────────────
@@ -834,7 +861,8 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
   const colorClass = getSubjectColor(subject)
   return (
     <td style={{ ...dragTdStyle(!!isDropTarget, isConflict, true), position:"relative" as const }} {...sharedTdProps}>
-      <div className={colorClass}
+      {/* isSrc = pluck effect: cell goes nearly invisible when being dragged */}
+      <div className={`${colorClass}${isSrc ? " tt-drag-src" : ""}`}
         draggable={isDraggable}
         onDragStart={isDraggable ? onDragStart : undefined}
         onClick={onClick}
@@ -868,18 +896,19 @@ function SubjectCell({ subject, teacher, room, isClassTeacher, isSub, subTeacher
 }
 
 // ── Reusable drag-enabled teacher-view cell ────────────────
-function TeacherCell({ colorClass, cell, showRoom, editMode, dragOver, isDropTarget, hasConflict, dragProps, onDragStart, onDelete }: {
+function TeacherCell({ colorClass, cell, showRoom, editMode, dragOver, isDropTarget, hasConflict, dragProps, onDragStart, onDelete, isSrc }: {
   colorClass: string; cell: any; showRoom: boolean; editMode: boolean;
   dragOver: boolean; isDropTarget: boolean; hasConflict?: boolean; dragProps: any;
   onDragStart?: (e: React.DragEvent) => void;
-  onDelete?: () => void;
+  onDelete?: () => void; isSrc?: boolean;
 }) {
   // No JS hover state — action buttons shown via CSS `.tt-cell-actions` on `td:hover`
   const hasFill = !!cell?.subject
   return (
     <td style={{ ...dragTdStyle(isDropTarget, !!hasConflict, hasFill), position:"relative" as const }}
       {...dragProps}>
-      <div className={colorClass}
+      {/* isSrc = pluck effect */}
+      <div className={`${colorClass}${isSrc ? " tt-drag-src" : ""}`}
         draggable={editMode && !!onDragStart}
         onDragStart={editMode ? onDragStart : undefined}
         style={{ borderRadius:5, padding:"4px 7px", minHeight:44, border:cell.conflict?"2px solid #fca5a5":"none", position:"relative" as const, cursor: editMode&&onDragStart?"grab":"default" }}>
@@ -937,6 +966,11 @@ export function TimetablePage() {
   // startTransition: marks view/mode switches as non-urgent so the browser
   // can show click/hover feedback immediately before the expensive re-render.
   const [isViewPending, startViewTransition] = useTransition()
+  // Keep CalendarView mounted after first visit — avoids full re-mount on every switch.
+  const [calendarEverMounted, setCalendarEverMounted] = useState(false)
+  useEffect(() => {
+    if (mainMode === "calendar" && !calendarEverMounted) setCalendarEverMounted(true)
+  }, [mainMode, calendarEverMounted])
 
   const [dragItem, setDragItem] = useState<{section:string;day:string;periodId:string}|null>(null)
   const [dragOverCell, setDragOverCell] = useState<string|null>(null) // key = "sec|day|pid"
@@ -1702,6 +1736,7 @@ export function TimetablePage() {
                           onDragLeave={() => setDragOverCell(null)}
                           onClick={() => editMode && !cell?.subject ? setEditTarget({section:sn, day, periodId:p.id}) : undefined}
                           isDraggable={editMode && !!cell?.subject}
+                          isSrc={!!(dragItem?.section===sn && dragItem?.day===day && dragItem?.periodId===p.id)}
                           onDragStart={e => handleDragStart(e, {section:sn, day, periodId:p.id})}
                           onDelete={() => {
                             const newTT = { ...classTT }
@@ -1817,6 +1852,7 @@ export function TimetablePage() {
                           onDragLeave={() => setDragOverCell(null)}
                           onClick={() => editMode && !cell?.subject ? setEditTarget({section:sn, day, periodId:p.id}) : undefined}
                           isDraggable={editMode && !!cell?.subject}
+                          isSrc={!!(dragItem?.section===sn && dragItem?.day===day && dragItem?.periodId===p.id)}
                           onDragStart={e => handleDragStart(e, {section:sn, day, periodId:p.id})}
                           onDelete={() => {
                             const newTT = { ...classTT }
@@ -1999,6 +2035,7 @@ export function TimetablePage() {
                         <TeacherCell key={col.key} colorClass={colorClass} cell={taughtCell} showRoom={showRoom}
                           editMode={editMode} dragOver={dragOverCell===ttCellKey} isDropTarget={ttIsTarget}
                           hasConflict={!!ttConflict} dragProps={ttDragProps}
+                          isSrc={!!(dragItem?.section===taughtSec && dragItem?.day===day && dragItem?.periodId===col.periodId)}
                           onDragStart={editMode ? e => handleDragStart(e, {section:taughtSec, day, periodId:col.periodId}) : undefined}
                           onDelete={editMode ? () => {
                             const newTT = { ...classTT }
@@ -2025,7 +2062,9 @@ export function TimetablePage() {
                     return (
                       <td key={col.key} {...ttFreeDragProps}
                         style={{ ...dragTdStyle(ttIsTarget, !!ttFreeConflict, false, isSameTeacherDrag && !ttIsTarget), position:"relative" as const }}>
-                        <div style={dragInnerStyle(ttIsTarget, !!ttFreeConflict)} />
+                        <div style={{ ...dragInnerStyle(ttIsTarget, !!ttFreeConflict), position:"relative" as const }}>
+                          {ttIsTarget && <DropIndicator hasConflict={!!ttFreeConflict} />}
+                        </div>
                       </td>
                     )
                   })}
@@ -2163,6 +2202,7 @@ export function TimetablePage() {
                           <TeacherCell key={col.key} colorClass={colorClass} cell={taughtCell} showRoom={showRoom}
                             editMode={editMode} dragOver={dragOverCell===ttTKey} isDropTarget={ttTIsTarget}
                             hasConflict={!!ttTConflict} dragProps={ttTDragProps}
+                            isSrc={!!(dragItem?.section===taughtSec && dragItem?.day===day && dragItem?.periodId===col.periodId)}
                             onDragStart={editMode ? e => handleDragStart(e, {section:taughtSec, day, periodId:col.periodId}) : undefined}
                             onDelete={editMode ? () => {
                               const newTT = { ...classTT }
@@ -2188,7 +2228,9 @@ export function TimetablePage() {
                       return (
                         <td key={col.key} {...ttTFreeDragProps}
                           style={{ ...dragTdStyle(ttTIsTarget, !!ttTFreeConflict, false, isSameTeacherDrag && !ttTIsTarget), position:"relative" as const }}>
-                          <div style={dragInnerStyle(ttTIsTarget, !!ttTFreeConflict)} />
+                          <div style={{ ...dragInnerStyle(ttTIsTarget, !!ttTFreeConflict), position:"relative" as const }}>
+                            {ttTIsTarget && <DropIndicator hasConflict={!!ttTFreeConflict} />}
+                          </div>
                         </td>
                       )
                     })}
@@ -3149,20 +3191,19 @@ export function TimetablePage() {
         )}
 
         {/* ══ Content area ═════════════════════════════════════════════ */}
-        <div
-          style={{ flex:1, overflowY: mainMode==="calendar" ? "hidden" : "auto",
-            padding: mainMode==="calendar" ? 0 : 16,
-            display: mainMode==="calendar" ? "flex" : "block",
-            flexDirection:"column" as const, position:"relative" as const,
-          }}
+        <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" as const, position:"relative" as const }}
           onClick={() => { if (showExportMenu) setShowExportMenu(false) }}
         >
 
-          {/* ═══ Calendar mode ═══ */}
-          {mainMode === "calendar" && renderCalendarView(selectedEntity)}
+          {/* ═══ Calendar mode — kept mounted after first visit (display:none when inactive) ═══ */}
+          <div style={{ display: mainMode==="calendar" ? "flex" : "none",
+            flex:1, flexDirection:"column" as const, overflow:"hidden" }}>
+            {calendarEverMounted && renderCalendarView(selectedEntity)}
+          </div>
 
           {/* ═══ Traditional mode ═══ */}
           {mainMode === "traditional" && (
+            <div style={{ flex:1, overflowY:"auto", padding:16 }}>
             <>
               {/* Warm-cell style override */}
               <style>{`
@@ -3208,6 +3249,7 @@ export function TimetablePage() {
                 </div>
               )}
             </>
+            </div>
           )}
         </div>
       </div>

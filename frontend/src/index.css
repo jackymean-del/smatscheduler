@@ -177,6 +177,20 @@ select, input[type="checkbox"], input[type="radio"] { cursor: pointer; }
   0%   { background-position: -400px 0; }
   100% { background-position: 400px 0; }
 }
+
+/* Drop-target "+" badge pulse */
+@keyframes tt-drop-plus {
+  0%, 100% { transform: translate(-50%, -50%) scale(1);    box-shadow: 0 0 0 3px rgba(16,185,129,0.25); }
+  50%       { transform: translate(-50%, -50%) scale(1.18); box-shadow: 0 0 0 6px rgba(16,185,129,0.12); }
+}
+/* Source-cell pluck — ghost the original cell instantly on dragstart */
+.tt-drag-src {
+  opacity: 0.15 !important;
+  filter: grayscale(80%) !important;
+  outline: 2px dashed #94A3B8 !important;
+  outline-offset: -2px;
+  transition: opacity 0.08s ease, filter 0.08s ease;
+}
 .tt-skeleton {
   background: linear-gradient(90deg, #F8F7FF 25%, #EEEAFF 50%, #F8F7FF 75%);
   background-size: 800px 100%;
