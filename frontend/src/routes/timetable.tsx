@@ -539,17 +539,19 @@ function LunchCell({ id, secName, isTarget, hasConflict, isUnavailable, dragProp
   isTarget?: boolean; hasConflict?: boolean; isUnavailable?: boolean;
   dragProps?: { onDragOver:(e:React.DragEvent)=>void; onDrop:(e:React.DragEvent)=>void; onDragLeave:()=>void }
 }) {
-  const bg = isTarget
-    ? (hasConflict ? DRAG_CONFLICT_FILL : DRAG_SAFE_FILL)
-    : "#FFFBEB"
-  const border = isTarget
-    ? (hasConflict ? `2px solid ${DRAG_CONFLICT_BORDER}` : `2px solid ${DRAG_SAFE_BORDER}`)
+  // Lunch cells are "filled" → always use outline, never fill, to stay consistent
+  // with the filled-cell highlight rule (same as teaching cells).
+  const outline = isTarget
+    ? (hasConflict ? `2.5px solid ${DRAG_CONFLICT_BORDER}` : `2.5px solid ${DRAG_SAFE_BORDER}`)
     : isUnavailable
-      ? `2px solid ${DRAG_CONFLICT_BORDER}`   // red outline — slot not droppable during this drag
-      : "1px solid #E8E4FF"
+      ? `2.5px solid ${DRAG_CONFLICT_BORDER}`
+      : undefined
   return (
     <td key={id} {...(isTarget ? dragProps : undefined)}
-      style={{ background:bg, border, padding:"4px 6px", textAlign:"center" as const, verticalAlign:"middle" as const, cursor: isTarget ? "copy" : "default" }}>
+      style={{ background:"#FFFBEB", border:"1px solid #E8E4FF",
+        ...(outline ? { outline, outlineOffset:"-2px", zIndex:1, position:"relative" as const } : {}),
+        padding:"4px 6px", textAlign:"center" as const, verticalAlign:"middle" as const,
+        cursor: isTarget ? "copy" : "default" }}>
       <div style={{ fontSize:9, fontStyle:"italic", color:"#D4920E", fontWeight:600, lineHeight:1.4 }}>Lunch Break</div>
       {secName && <div style={{ fontSize:9, color:"#D4920E", opacity:0.8, fontWeight:500 }}>{secName}</div>}
     </td>
@@ -564,8 +566,13 @@ const DRAG_CONFLICT_FILL= "#FEE2E2"  // blank conflict
 const DRAG_SAFE_BORDER  = "#10B981"  // filled safe  (2px solid)
 const DRAG_CONFLICT_BORDER = "#EF4444" // filled conflict (2px solid)
 
-function dragTdStyle(isTarget: boolean, hasConflict: boolean, hasFill: boolean): React.CSSProperties {
-  if (!isTarget) return { padding:2 }
+function dragTdStyle(isTarget: boolean, hasConflict: boolean, hasFill: boolean, isUnavailable?: boolean): React.CSSProperties {
+  if (!isTarget && !isUnavailable) return { padding:2 }
+  if (isUnavailable && !isTarget) {
+    // Not a valid drop target during this drag → red fill (blank) or red outline (filled)
+    if (hasFill) return { padding:2, outline:`2.5px solid ${DRAG_CONFLICT_BORDER}`, outlineOffset:"-2px", zIndex:1, position:"relative" as const }
+    return { padding:2, background: DRAG_CONFLICT_FILL }
+  }
   if (hasFill) {
     // Filled cell → outline only. Use `outline` not `border` because tables use
     // border-collapse:collapse which merges/overrides td borders.
@@ -1791,7 +1798,7 @@ export function TimetablePage() {
                     // Free / droppable
                     return (
                       <td key={col.key} {...ttDragProps}
-                        style={{ ...dragTdStyle(ttIsTarget, !!ttConflict, false), position:"relative" as const }}>
+                        style={{ ...dragTdStyle(ttIsTarget, !!ttConflict, false, isSameTeacherDrag && !ttIsTarget), position:"relative" as const }}>
                         <div style={dragInnerStyle(ttIsTarget, !!ttConflict)} />
                       </td>
                     )
@@ -1941,7 +1948,7 @@ export function TimetablePage() {
                       )
                       return (
                         <td key={col.key} {...ttTDragProps}
-                          style={{ ...dragTdStyle(ttTIsTarget, !!ttTConflict, false), position:"relative" as const }}>
+                          style={{ ...dragTdStyle(ttTIsTarget, !!ttTConflict, false, isSameTeacherDrag && !ttTIsTarget), position:"relative" as const }}>
                           <div style={dragInnerStyle(ttTIsTarget, !!ttTConflict)} />
                         </td>
                       )
