@@ -795,6 +795,53 @@ export function CalendarView({
     return slots
   },[sections,periods,classwiseBreaks,dayStartMin])
 
+  // Per class-group full schedule (teaching + breaks) keyed by class key.
+  const groupSchedules = useMemo(()=>{
+    const m = new Map<string, Map<string,{start:number;end:number;name:string;type:Period["type"]}>>()
+    const seen = new Set<string>()
+    sections.forEach(sec=>{
+      const k = secKey(sec.name)
+      if (seen.has(k)) return; seen.add(k)
+      const ps = buildSecPeriods(sec.name, periods, classwiseBreaks)
+      const tm = calcTimes(ps, dayStartMin)
+      const sm = new Map<string,{start:number;end:number;name:string;type:Period["type"]}>()
+      ps.forEach(p=>{ const t=tm.get(p.id)!; sm.set(p.id, {start:t.start, end:t.end, name:p.name, type:p.type}) })
+      m.set(k, sm)
+    })
+    return m
+  },[sections,periods,classwiseBreaks,dayStartMin])
+
+  // Unified matrix columns: Assembly + distinct teaching slots + FULL break
+  // columns (e.g. Morning Break), sorted by start time. Partial/staggered
+  // lunches are NOT columns — they overlay as "Lunch" cells (same rule as the
+  // traditional teacher view). This gives the matrix its break columns and the
+  // correct staggered period structure without any time-axis width math.
+  type MCol = { key:string; periodId:string; name:string; type:Period["type"]; start:number; end:number }
+  const matrixColumns = useMemo<MCol[]>(()=>{
+    const cols = new Map<string, MCol>()
+    // fixed-start (Assembly)
+    periods.filter(p=>p.type==="fixed-start").forEach(p=>{
+      cols.set(`${p.id}@${dayStartMin}`, { key:`${p.id}@${dayStartMin}`, periodId:p.id, name:p.name, type:p.type, start:dayStartMin, end:dayStartMin+p.duration })
+    })
+    // teaching slots (distinct periodId@start across groups)
+    groupSchedules.forEach(sm=>{
+      sm.forEach((slot,pid)=>{
+        if (slot.type!=="class") return
+        const ck=`${pid}@${slot.start}`
+        if(!cols.has(ck)) cols.set(ck, { key:ck, periodId:pid, name:slot.name, type:"class", start:slot.start, end:slot.end })
+      })
+    })
+    // FULL break columns (assembly already added; morning break, etc.)
+    ;(classwiseBreaks ?? []).filter(b=>isFullBreak(b.id)).forEach(b=>{
+      // position from any group that has it
+      for (const sm of groupSchedules.values()) {
+        const s = sm.get(b.id)
+        if (s) { cols.set(`${b.id}@${s.start}`, { key:`${b.id}@${s.start}`, periodId:b.id, name:b.name, type:(b.type==="lunch"?"lunch":"break") as Period["type"], start:s.start, end:s.end }); break }
+      }
+    })
+    return [...cols.values()].sort((a,b)=>a.start-b.start)
+  },[periods,classwiseBreaks,groupSchedules,dayStartMin,isFullBreak])
+
   // ── Block builders ───────────────────────────────────────────────────
   const buildClassBlocks = useCallback((secName:string, dayKey:string): TimeBlock[] => {
     const ps=buildSecPeriods(secName,periods,classwiseBreaks)
@@ -1347,17 +1394,26 @@ export function CalendarView({
   // duration artefacts. Breaks are not cells; a thick divider separates days.
   // ══════════════════════════════════════════════════════════════════════
   const renderPeriodGrid = () => {
-    const teachingPeriods = periods.filter(p => p.type === "class")
     const days = workDays
     const rows = entityList   // already scoped by selectedEntity
-    const PCOL_W = 104
+    const cols = matrixColumns  // teaching splits + Assembly + full-break columns
+    const PCOL_W = 104, BCOL_W = 58
     const periodShort = (name:string) => name.replace(/period\s*/i, "P").replace(/\s+/g, "")
+    const fmtRange = (s:number,e:number) => `${fmtTime(s,timeFormat)}–${fmtTime(e,timeFormat)}`
+
+    // Lunch overlay detection: is this class group on a partial break overlapping [s,e)?
+    const lunchOverlay = (classKey:string, s:number, e:number): { name:string; mins:number } | null => {
+      const sm = groupSchedules.get(classKey); if (!sm) return null
+      for (const [, slot] of sm) {
+        if (slot.type!=="class" && slot.start < e && slot.end > s) return { name:slot.name, mins:slot.end-slot.start }
+      }
+      return null
+    }
 
     return (
       <div style={{ flex:1, overflow:"auto", background:"#fff" }}>
         <table style={{ borderCollapse:"separate", borderSpacing:0, fontSize:11, tableLayout:"fixed" as const }}>
           <thead>
-            {/* Day super-header */}
             <tr>
               <th rowSpan={2} style={{
                 position:"sticky" as const, left:0, top:0, zIndex:30,
@@ -1365,7 +1421,7 @@ export function CalendarView({
                 border:"1px solid #CBD5E1", fontSize:12, fontWeight:800, color:"#334155",
               }}>{viewMode === "class" ? "Class" : viewMode === "teacher" ? "Teacher" : viewMode === "room" ? "Room" : "Subject"}</th>
               {days.map((day, di) => (
-                <th key={day} colSpan={teachingPeriods.length} style={{
+                <th key={day} colSpan={cols.length} style={{
                   position:"sticky" as const, top:0, zIndex:20,
                   background:"#EEF2F8", color:"#1e293b", fontSize:13, fontWeight:800,
                   padding:"6px 0", textAlign:"center" as const,
@@ -1375,23 +1431,31 @@ export function CalendarView({
                 }}>{DAY_FULL[day] ?? day}</th>
               ))}
             </tr>
-            {/* Period sub-header */}
             <tr>
-              {days.map((day, di) => teachingPeriods.map((p, pi) => (
-                <th key={`${day}|${p.id}`} style={{
-                  position:"sticky" as const, top:34, zIndex:19,
-                  width:PCOL_W, minWidth:PCOL_W, background:"#F8FAFC",
-                  color:"#475569", fontSize:10.5, fontWeight:700, padding:"4px 0",
-                  textAlign:"center" as const,
-                  borderBottom:"1.5px solid #CBD5E1",
-                  borderLeft: (di>0 && pi===0) ? "3px solid #94A3B8" : "1px solid #E2E8F0",
-                  borderRight:"1px solid #E2E8F0",
-                }}>{periodShort(p.name)}</th>
-              )))}
+              {days.map((day, di) => cols.map((c, ci) => {
+                const isBrk = c.type !== "class"
+                return (
+                  <th key={`${day}|${c.key}`} style={{
+                    position:"sticky" as const, top:34, zIndex:19,
+                    width:isBrk?BCOL_W:PCOL_W, minWidth:isBrk?BCOL_W:PCOL_W,
+                    background:isBrk?"#FEF9EC":"#F8FAFC",
+                    color:isBrk?"#B45309":"#475569", fontSize:10, fontWeight:700, padding:"3px 2px",
+                    textAlign:"center" as const, lineHeight:1.25,
+                    borderBottom:"1.5px solid #CBD5E1",
+                    borderLeft: (di>0 && ci===0) ? "3px solid #94A3B8" : "1px solid #E2E8F0",
+                    borderRight:"1px solid #E2E8F0",
+                  }}>
+                    <div style={{ whiteSpace:"nowrap" as const }}>{isBrk ? c.name : periodShort(c.name)}</div>
+                    <div style={{ fontSize:7.5, fontWeight:500, opacity:0.7, whiteSpace:"nowrap" as const }}>{fmtRange(c.start,c.end)}</div>
+                  </th>
+                )
+              }))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((ent, ri) => (
+            {rows.map((ent, ri) => {
+              const entClassKey = viewMode==="class" ? secKey(ent.id) : null
+              return (
               <tr key={ent.id}>
                 <td style={{
                   position:"sticky" as const, left:0, zIndex:10,
@@ -1401,49 +1465,62 @@ export function CalendarView({
                   color:"#1e293b", padding:"6px 10px", whiteSpace:"nowrap" as const,
                 }}>{ent.label}</td>
                 {days.map((day, di) => {
-                  // Index this entity's teaching blocks for the day once (avoids
-                  // calling the expensive getEntityBlocks per period cell).
+                  // Index this entity's teaching blocks for the day by periodId@startMin.
                   const dayBlocks = getEntityBlocks(ent.id, day)
-                  const byPid = new Map<string, typeof dayBlocks[0]>()
-                  dayBlocks.forEach(b => { if (b.periodType === "class" && b.subject) byPid.set(b.periodId, b) })
-                  return teachingPeriods.map((p, pi) => {
-                  const b = byPid.get(p.id) ?? null
-                  const leftBorder = (di>0 && pi===0) ? "3px solid #94A3B8" : "1px solid #E2E8F0"
-                  if (!b) {
-                    return <td key={`${day}|${p.id}`} style={{
-                      width:PCOL_W, minWidth:PCOL_W, height:48,
-                      background: ri%2===0 ? "#fff" : "#FCFDFE",
-                      borderLeft:leftBorder, borderRight:"1px solid #E2E8F0", borderBottom:"1px solid #E2E8F0",
-                    }} />
-                  }
-                  const col = subjectColor(b.subject)
-                  const subD = shortNames ? getSubjectShortName(b.subject, subjects) : b.subject
-                  const tchD = b.teacher ? (shortNames ? getStaffShortName(b.teacher, staff) : b.teacher) : ""
-                  const secD = b.sectionName
-                  return (
-                    <td key={`${day}|${p.id}`}
-                      onClick={()=>onClick(b, day)}
-                      style={{
-                        width:PCOL_W, minWidth:PCOL_W, height:48, padding:2,
+                  const bySlot = new Map<string, typeof dayBlocks[0]>()
+                  dayBlocks.forEach(b => { if (b.periodType === "class" && b.subject) bySlot.set(`${b.periodId}@${b.startMin}`, b) })
+                  return cols.map((c, ci) => {
+                    const leftBorder = (di>0 && ci===0) ? "3px solid #94A3B8" : "1px solid #E2E8F0"
+                    const W = c.type!=="class" ? BCOL_W : PCOL_W
+                    // ── Full-break column (Assembly, Morning Break) ──
+                    if (c.type !== "class") {
+                      return <td key={`${day}|${c.key}`} style={{
+                        width:W, minWidth:W, height:48, textAlign:"center" as const, verticalAlign:"middle" as const,
+                        background:"#FEF9EC", color:"#B45309", fontSize:8.5, fontWeight:600, fontStyle:"italic",
                         borderLeft:leftBorder, borderRight:"1px solid #E2E8F0", borderBottom:"1px solid #E2E8F0",
-                        cursor:"pointer",
-                      }}>
-                      <div style={{
-                        height:"100%", borderRadius:5, background:col.bg,
-                        borderLeft:`3px solid ${col.accent}`, padding:"3px 6px",
-                        display:"flex", flexDirection:"column" as const, justifyContent:"center", overflow:"hidden",
-                      }}>
-                        <div style={{ fontSize:10.5, fontWeight:700, color:col.accent, lineHeight:1.25,
-                          overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>{subD}</div>
-                        {viewMode!=="class" && secD && <div style={{ fontSize:9, fontWeight:700, color:"#374151", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{secD}</div>}
-                        {viewMode!=="teacher" && tchD && <div style={{ fontSize:9, color:"#555", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{b.isClassTeacher?"★ ":""}{tchD}</div>}
-                        {showRoom && b.room && viewMode!=="room" && <div style={{ fontSize:8.5, color:"#777", fontFamily:"monospace", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{shortNames?shortRoom(b.room):b.room}</div>}
-                      </div>
-                    </td>
-                  )
-                })})}
+                      }}>{c.name}</td>
+                    }
+                    const b = bySlot.get(`${c.periodId}@${c.start}`) ?? null
+                    // ── Teaching cell ──
+                    if (b) {
+                      const col = subjectColor(b.subject)
+                      const subD = shortNames ? getSubjectShortName(b.subject, subjects) : b.subject
+                      const tchD = b.teacher ? (shortNames ? getStaffShortName(b.teacher, staff) : b.teacher) : ""
+                      const secD = b.sectionName
+                      return (
+                        <td key={`${day}|${c.key}`} onClick={()=>onClick(b, day)}
+                          style={{ width:W, minWidth:W, height:48, padding:2, cursor:"pointer",
+                            borderLeft:leftBorder, borderRight:"1px solid #E2E8F0", borderBottom:"1px solid #E2E8F0" }}>
+                          <div style={{ height:"100%", borderRadius:5, background:col.bg, borderLeft:`3px solid ${col.accent}`, padding:"3px 6px",
+                            display:"flex", flexDirection:"column" as const, justifyContent:"center", overflow:"hidden" }}>
+                            <div style={{ fontSize:10.5, fontWeight:700, color:col.accent, lineHeight:1.25, overflow:"hidden", textOverflow:"ellipsis" as const, whiteSpace:"nowrap" as const }}>{subD}</div>
+                            {viewMode!=="class" && secD && <div style={{ fontSize:9, fontWeight:700, color:"#374151", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{secD}</div>}
+                            {viewMode!=="teacher" && tchD && <div style={{ fontSize:9, color:"#555", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{b.isClassTeacher?"★ ":""}{tchD}</div>}
+                            {showRoom && b.room && viewMode!=="room" && <div style={{ fontSize:8.5, color:"#777", fontFamily:"monospace", whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" as const }}>{shortNames?shortRoom(b.room):b.room}</div>}
+                          </div>
+                        </td>
+                      )
+                    }
+                    // ── Lunch overlay (class view): this class on a partial break here ──
+                    if (entClassKey) {
+                      const lunch = lunchOverlay(entClassKey, c.start, c.end)
+                      if (lunch) return (
+                        <td key={`${day}|${c.key}`} style={{ width:W, minWidth:W, height:48, textAlign:"center" as const, verticalAlign:"middle" as const,
+                          background:"#FFFBEB", color:"#D4920E", fontSize:8.5, fontStyle:"italic", fontWeight:600, lineHeight:1.3,
+                          borderLeft:leftBorder, borderRight:"1px solid #E2E8F0", borderBottom:"1px solid #E2E8F0" }}>
+                          <div>{lunch.name}</div>
+                          <div style={{ fontSize:7.5, opacity:0.8 }}>{lunch.mins}m</div>
+                        </td>
+                      )
+                    }
+                    // ── Empty ──
+                    return <td key={`${day}|${c.key}`} style={{ width:W, minWidth:W, height:48,
+                      background: ri%2===0 ? "#fff" : "#FCFDFE",
+                      borderLeft:leftBorder, borderRight:"1px solid #E2E8F0", borderBottom:"1px solid #E2E8F0" }} />
+                  })
+                })}
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
